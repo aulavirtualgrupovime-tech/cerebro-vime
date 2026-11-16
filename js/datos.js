@@ -36,8 +36,14 @@ const Datos = (() => {
     for (let intento = 0; intento < 3 && !j; intento++) {
       try {
         if (intento) await new Promise(r => setTimeout(r, 1500 * intento));
-        const r = await fetch(CONFIG.SERVIDOR_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(cuerpo) });
-        const texto = await r.text();
+        // Tiempo límite por intento: si Google deja la petición colgada, se corta y se reintenta
+        const ctl = new AbortController();
+        const limite = setTimeout(() => ctl.abort(), (accion === 'subir' || accion === 'archivo') ? 120000 : 25000);
+        let texto;
+        try {
+          const r = await fetch(CONFIG.SERVIDOR_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(cuerpo), signal: ctl.signal });
+          texto = await r.text();
+        } finally { clearTimeout(limite); }
         j = JSON.parse(texto);
       } catch (e) { ultimo = e; }
     }
