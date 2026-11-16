@@ -1,0 +1,7 @@
+# Solo se publica la página. El servidor, las pruebas, la marca original y los lanzadores se quedan en este equipo.
+servidor/
+pruebas/
+marca/
+*.bat
+GUIA_INSTALACION.md
+img/logo_aula.png
