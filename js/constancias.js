@@ -17,6 +17,8 @@ const Constancias = (() => {
     qr: 'https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js',
     jszip: 'https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js',
     xlsx: 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js',
+    mammoth: 'https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.8.0/mammoth.browser.min.js',
+    ocr: 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js',
     recursos: 'js/constancia_recursos.js'
   };
   const URL_VERIFICACION = 'https://aulavirtualgrupovime-tech.github.io/cerebro-vime/verifica.html?f=';
@@ -124,13 +126,69 @@ const Constancias = (() => {
     return datos.map(f => {
       const v = k => mapa[k] === undefined ? '' : String(f[mapa[k]] == null ? '' : f[mapa[k]]).trim();
       const p = { nombres: v('nombres'), apellidoPaterno: v('apellidoPaterno'), apellidoMaterno: v('apellidoMaterno'), curp: v('curp').toUpperCase(), puesto: v('puesto'), ocupacion: v('ocupacion'), empresa: v('empresa') };
-      if (!p.nombres && v('nombreCompleto')) { const t = v('nombreCompleto').split(/\s+/); p.apellidoMaterno = t.length > 2 ? t.pop() : ''; p.apellidoPaterno = t.length > 1 ? t.pop() : ''; p.nombres = t.join(' '); }
+      if (!p.nombres && v('nombreCompleto')) Object.assign(p, partirNombre(v('nombreCompleto'), false), { completo: v('nombreCompleto') });
       return p;
     }).filter(p => p.nombres || p.apellidoPaterno);
   }
+  /** Separa un nombre completo. apellidosPrimero: «PÉREZ GARCÍA JUAN» en lugar de «Juan Pérez García». */
+  function partirNombre(txt, apellidosPrimero) {
+    const t = String(txt || '').replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
+    if (apellidosPrimero) return { apellidoPaterno: t[0] || '', apellidoMaterno: t.length > 2 ? t[1] : '', nombres: t.slice(t.length > 2 ? 2 : 1).join(' ') };
+    const mat = t.length > 2 ? t.pop() : ''; const pat = t.length > 1 ? t.pop() : '';
+    return { nombres: t.join(' '), apellidoPaterno: pat, apellidoMaterno: mat };
+  }
+  /** Word: toma la tabla más grande del documento; si no hay tablas, cada renglón es un participante. */
+  async function leerWord(file) {
+    if (!globalThis.mammoth) await cargar(CDN.mammoth);
+    const { value } = await mammoth.convertToHtml({ arrayBuffer: await file.arrayBuffer() });
+    const doc = new DOMParser().parseFromString(value, 'text/html');
+    const tablas = [...doc.querySelectorAll('table')].map(t => [...t.querySelectorAll('tr')].map(tr => [...tr.children].map(c => c.textContent.replace(/\s+/g, ' ').trim())));
+    if (tablas.length) {
+      const t = tablas.sort((a, b) => b.length - a.length)[0];
+      const conEnc = deFilas(t);
+      if (conEnc.length) return conEnc;
+    }
+    return deLineas([...doc.querySelectorAll('p')].map(p => p.textContent));
+  }
+  /** Renglones sueltos (Word sin tabla u OCR de una foto): busca CURP y toma el texto anterior como nombre. */
+  const CURP_SUELTA = /\b[A-Z0-9]{4}[0-9OIL]{6}[HMX][A-Z0-9]{5}[A-Z0-9][0-9OIL]\b/;
+  /** Corrige confusiones típicas del OCR (O↔0, I/L↔1) según la posición de cada carácter de la CURP. */
+  function curpOCR(c) {
+    const D = { O: '0', I: '1', L: '1' }, A = { '0': 'O', '1': 'I' };
+    const x = c.split('').map((ch, i) => (i >= 4 && i <= 9) || i === 17 ? (D[ch] || ch) : (i < 4 || (i >= 10 && i <= 15)) ? (A[ch] || ch) : ch);
+    if (+(x[4] + x[5]) >= 30) x[16] = D[x[16]] || x[16];   // nacidos en el siglo XX: el carácter 17 es un dígito
+    return x.join('');
+  }
+  const ENCABEZADO = /\b(NOMBRE|FIRMA|CURP|PUESTO|NO\.|N[ÚU]M|LISTA|ASISTENCIA|CURSO|FECHA|INSTRUCTOR|EMPRESA|CAPACITADOR|HORARIO|SEDE)\b/i;
+  function deLineas(lineas) {
+    const out = [];
+    lineas.forEach(l => {
+      let t = String(l || '').replace(/[|_]+/g, ' ').replace(/\s+/g, ' ').trim();
+      if (!t || t.length < 5) return;
+      const up = t.toUpperCase().normalize('NFC');
+      const m = up.replace(/\s/g, '').match(CURP_SUELTA) || up.match(CURP_SUELTA);
+      if (!m && ENCABEZADO.test(t) && !/\d/.test(t.slice(0, 3))) return;
+      let curp = m ? curpOCR(m[0]) : '';
+      let nombre = m ? t.slice(0, Math.max(0, up.indexOf(m[0].slice(0, 4)))) : t;
+      nombre = nombre.replace(/^\s*\d{1,3}\s*[.)\-–]?\s*/, '').replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ' .-]/g, ' ').replace(/\s+/g, ' ').trim();
+      if (nombre.split(' ').filter(w => w.length > 1).length < 2) return;
+      out.push(Object.assign({ curp, puesto: '', ocupacion: '', empresa: '', completo: nombre }, partirNombre(nombre, false)));
+    });
+    return out;
+  }
+  /** Foto o escaneo de la lista: lectura de texto (OCR) en este equipo. Funciona mejor con listas impresas o en letra de molde clara. */
+  async function leerImagen(file, avance) {
+    if (!globalThis.Tesseract) await cargar(CDN.ocr);
+    const r = await Tesseract.recognize(file, 'spa', { logger: m => { if (avance && m.status === 'recognizing text') avance(Math.round(m.progress * 100)); } });
+    const lineas = (r.data.lines && r.data.lines.length ? r.data.lines.map(l => l.text) : String(r.data.text || '').split(/\n/));
+    return deLineas(lineas);
+  }
   function deTexto(t) { return deFilas(String(t || '').split(/\r?\n/).map(l => l.split(l.includes('\t') ? '\t' : /[,;]/))); }
-  async function leerArchivo(file) {
+  async function leerArchivo(file, avance) {
     if (/\.(csv|txt)$/i.test(file.name)) return deTexto(await file.text());
+    if (/\.docx$/i.test(file.name)) return leerWord(file);
+    if (/\.doc$/i.test(file.name)) throw new Error('Guarde el documento como .docx (Word 2007 o posterior) e inténtelo de nuevo.');
+    if (/^image\//.test(file.type) || /\.(jpe?g|png|webp|bmp|heic)$/i.test(file.name)) return leerImagen(file, avance);
     if (!globalThis.XLSX) await cargar(CDN.xlsx);
     const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
     const hoja = wb.Sheets[wb.SheetNames.find(n => /particip/i.test(n)) || wb.SheetNames[0]];
@@ -232,6 +290,6 @@ const Constancias = (() => {
     return z.generateAsync({ type: 'blob' });
   }
 
-  return { generar, zip, leerArchivo, deTexto, validarCURP, nombreCompleto, fechasTexto, URL_VERIFICACION, CFG };
+  return { generar, zip, leerArchivo, deTexto, partirNombre, validarCURP, nombreCompleto, fechasTexto, URL_VERIFICACION, CFG };
 })();
 if (typeof module !== 'undefined') module.exports = Constancias;

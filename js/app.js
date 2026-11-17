@@ -1213,7 +1213,7 @@
       dato('DC-3', dc3 ? '<b style="color:var(--verde)">APLICA</b>' : '<b style="color:var(--gris)">NO APLICA</b>') +
       dato('Folios', 'AV.' + esc(claveCurso(cu)) + esc(anio) + (emp ? '-NNN (uno para la empresa)' : '-001, -002…')) + '</div></div>' +
       '<div class="tarjeta"><div class="tarjeta-cab"><h3>Participantes (' + ps.length + ')</h3><div style="display:flex;gap:8px;flex-wrap:wrap">' +
-      '<button class="btn sec" data-acc="importarLista" data-id="' + cu.id + '">📥 Importar Excel / pegar lista</button><button class="btn acento" data-acc="nuevoParticipante" data-id="' + cu.id + '">+ Agregar</button></div></div>' +
+      '<button class="btn sec" data-acc="importarLista" data-id="' + cu.id + '">📥 Importar lista (Excel, Word o foto)</button><button class="btn acento" data-acc="nuevoParticipante" data-id="' + cu.id + '">+ Agregar</button></div></div>' +
       (emp ? '<p class="sub">Con constancia para toda la empresa la lista es opcional' + (dc3 ? ', pero se necesita para las DC-3.' : '; sirve como registro de asistencia.') + '</p>' : '') +
       (conErr.length ? '<div class="aviso-it ambar"><div><b>' + conErr.length + ' participante' + (conErr.length === 1 ? '' : 's') + ' con datos por revisar</b><span>' + (dc3 ? 'La CURP correcta es obligatoria para la DC-3.' : 'Revise nombres y apellidos.') + '</span></div></div>' : '') +
       (ps.length ? '<div style="overflow-x:auto"><table class="tabla"><thead><tr><th>#</th><th>Nombre</th><th>CURP</th><th>Puesto</th><th>Folio</th><th></th></tr></thead><tbody>' +
@@ -1223,7 +1223,7 @@
             (p.folio ? '<b>' + esc(p.folio) + '</b>' + (r && r.estado === 'cancelada' ? ' <span class="etiqueta" style="background:var(--rojo)">Cancelada</span>' : '') : '<span class="sub">' + (emp ? 'En la de empresa' : 'Por emitir') + '</span>') + '</td><td style="white-space:nowrap">' +
             '<button class="btn-icono" data-acc="editarParticipante" data-id="' + cu.id + '" data-k="' + k + '" title="Editar">✎</button>' +
             (p.folio ? '' : '<button class="btn-icono" data-acc="quitarParticipante" data-id="' + cu.id + '" data-k="' + k + '" title="Quitar">✕</button>') + '</td></tr>';
-        }).join('') + '</tbody></table></div>' : '<div class="vacio">Importe la lista desde Excel (plantilla de la skill o cualquier tabla con Nombre, Apellidos y CURP) o péguela desde la hoja de cálculo.</div>') + '</div>' +
+        }).join('') + '</tbody></table></div>' : '<div class="vacio">Importe la lista de asistencia desde Excel, Word o una foto, o péguela desde la hoja de cálculo.</div>') + '</div>' +
       '<div class="tarjeta"><h3>Constancias de participación</h3>' +
       '<div class="etapa' + (ins && (ins.firmaData || ins.firmaDriveId) ? ' hecha' : '') + '"><span class="txt">1. Capacitador con firma digital asignado</span></div>' +
       (emp ? '<div class="etapa' + (cu.folioEmpresa ? ' hecha' : '') + '"><span class="txt">2. Folio de la constancia para toda la empresa' + (cu.folioEmpresa ? ': <b>' + esc(cu.folioEmpresa) + '</b>' + (regEmp && regEmp.estado === 'cancelada' ? ' <span class="etiqueta" style="background:var(--rojo)">Cancelada</span>' : '') : '') + '<div class="sub">«' + esc(textoEmpresa(cu)) + '»</div></span>' +
@@ -1323,27 +1323,63 @@
     });
   }
   function dialogoLista(cuId) {
-    const cu = cursoPorId(cuId);
-    abrirModal('Importar participantes · ' + cu.curso, '<form class="form" id="formLista">' +
-      '<div class="campo ancho"><label>Archivo de Excel o CSV</label><input type="file" id="lisArchivo" accept=".xlsx,.xls,.csv,.txt"><span class="ayuda">Sirve la plantilla de la skill (hoja «participantes») o cualquier tabla con encabezados como Nombre(s), Apellido paterno, Apellido materno, CURP, Puesto.</span></div>' +
-      '<div class="campo ancho"><label>…o pegue aquí las celdas copiadas de Excel</label><textarea id="lisTexto" rows="6" placeholder="Apellido paterno	Apellido materno	Nombre(s)	CURP	Puesto"></textarea><span class="ayuda">Si no copia los encabezados, el orden debe ser: Apellido paterno, Apellido materno, Nombre(s), CURP, Puesto, Empresa.</span></div>' +
-      '<div class="campo check ancho"><input type="checkbox" id="lisReemplazar"><label for="lisReemplazar">Reemplazar la lista actual (se conservan quienes ya tienen folio)</label></div>' +
-      '<div class="error-form" id="errLista" hidden></div><div class="form-pie"><button type="button" class="btn sec" data-acc="cerrarModal">Cancelar</button><button class="btn" type="submit">Importar</button></div></form>');
-    $('#formLista').addEventListener('submit', async e => {
-      e.preventDefault(); const err = $('#errLista'); const btn = e.submitter; btn.disabled = true; btn.textContent = 'Leyendo…';
+    const cu = cursoPorId(cuId); let filas = [];
+    abrirModal('Importar lista de asistencia · ' + cu.curso, '<form class="form" id="formLista">' +
+      '<div class="campo ancho"><label>Lista en Excel, Word o imagen</label><input type="file" id="lisArchivo" accept=".xlsx,.xls,.csv,.txt,.docx,image/*">' +
+      '<span class="ayuda">Excel o CSV (la plantilla de la skill o cualquier tabla con Nombre(s), Apellidos y CURP) · Word (.docx) con la lista en tabla · Foto o escaneo de la lista firmada (JPG o PNG). La foto se lee en este equipo; funciona mejor con lista impresa o letra de molde clara, bien iluminada y derecha.</span></div>' +
+      '<div class="campo ancho"><label>…o pegue aquí las celdas copiadas de Excel</label><textarea id="lisTexto" rows="4" placeholder="Apellido paterno	Apellido materno	Nombre(s)	CURP	Puesto"></textarea></div>' +
+      '<div class="form-pie" style="justify-content:flex-start"><button type="button" class="btn sec" id="lisLeer">Leer lista</button><span class="sub" id="lisEstado"></span></div>' +
+      '<div id="lisRevision"></div>' +
+      '<div class="error-form" id="errLista" hidden></div><div class="form-pie"><button type="button" class="btn sec" data-acc="cerrarModal">Cancelar</button><button class="btn" type="submit" id="lisGuardar" disabled>Guardar participantes</button></div></form>');
+    document.querySelector('.modal').classList.add('ancha');
+    const err = $('#errLista'), est = $('#lisEstado');
+    const campos = [['nombres', 'Nombre(s)'], ['apellidoPaterno', 'Apellido paterno'], ['apellidoMaterno', 'Apellido materno'], ['curp', 'CURP'], ['puesto', 'Puesto']];
+    function pintarRevision(origenFoto) {
+      const dc3 = aplicaDC3(cu);
+      $('#lisRevision').innerHTML = filas.length ? '<div class="aviso-it ' + (origenFoto ? 'ambar' : 'azul') + '"><div><b>Revise antes de guardar (' + filas.length + ' encontrados)</b><span>' +
+        (origenFoto ? 'La lectura de una foto puede confundir letras: compare con la lista original y corrija aquí. ' : '') + 'Puede corregir cualquier celda o quitar renglones.' + (dc3 ? ' Para DC-3 la CURP debe ser correcta.' : '') + '</span></div></div>' +
+        (filas.some(f => f.completo) ? '<div style="margin:6px 0"><button type="button" class="btn sec chico" id="lisOrden">⇄ En la lista los apellidos van primero</button></div>' : '') +
+        '<div style="overflow-x:auto;max-height:46vh"><table class="tabla"><thead><tr><th>#</th>' + campos.map(c => '<th>' + c[1] + '</th>').join('') + '<th></th></tr></thead><tbody>' +
+        filas.map((f, k) => { const e = dc3 || f.curp ? Constancias.validarCURP(f.curp) : '';
+          return '<tr><td>' + (k + 1) + '</td>' + campos.map(c => '<td><input data-k="' + k + '" data-c="' + c[0] + '" value="' + esc(f[c[0]] || '') + '" style="width:100%;min-width:' + (c[0] === 'curp' ? 170 : 110) + 'px' + (c[0] === 'curp' && e ? ';border-color:var(--rojo)' : '') + '"' + (c[0] === 'curp' && e ? ' title="' + esc(e) + '"' : '') + '></td>').join('') +
+            '<td><button type="button" class="btn-icono" data-quitar="' + k + '" title="Quitar">✕</button></td></tr>'; }).join('') + '</tbody></table></div>' +
+        '<div class="campo check ancho" style="margin-top:8px"><input type="checkbox" id="lisReemplazar"><label for="lisReemplazar">Reemplazar la lista actual (se conservan quienes ya tienen folio)</label></div>' : '';
+      $('#lisGuardar').disabled = !filas.length; $('#lisGuardar').textContent = 'Guardar ' + filas.length + ' participante' + (filas.length === 1 ? '' : 's');
+      $('#lisRevision').querySelectorAll('input[data-k]').forEach(i => i.addEventListener('input', () => { const f = filas[+i.dataset.k]; f[i.dataset.c] = i.dataset.c === 'curp' ? i.value.toUpperCase().trim() : i.value; delete f.completo; }));
+      $('#lisRevision').querySelectorAll('[data-quitar]').forEach(bn => bn.addEventListener('click', () => { filas.splice(+bn.dataset.quitar, 1); pintarRevision(origenFoto); }));
+      const bo = $('#lisOrden');
+      if (bo) bo.addEventListener('click', () => { filas.forEach(f => { if (f.completo) Object.assign(f, Constancias.partirNombre(f.completo, !f._apPrimero), { _apPrimero: !f._apPrimero }); }); pintarRevision(origenFoto); });
+    }
+    async function leer() {
+      err.hidden = true;
+      const f = $('#lisArchivo').files[0], t = $('#lisTexto').value.trim();
+      if (!f && !t) { err.textContent = 'Elija un archivo o pegue la lista.'; err.hidden = false; return; }
+      const foto = !!(f && (/^image\//.test(f.type) || /\.(jpe?g|png|webp|bmp|heic)$/i.test(f.name)));
+      $('#lisLeer').disabled = true; est.textContent = foto ? 'Leyendo la imagen… (la primera vez descarga el lector, unos segundos)' : 'Leyendo…';
       try {
-        const f = $('#lisArchivo').files[0]; const t = $('#lisTexto').value;
-        let nuevos = f ? await Constancias.leerArchivo(f) : Constancias.deTexto(t);
-        if (!nuevos.length) throw new Error('No encontré participantes. Revise que la tabla tenga nombres y apellidos.');
-        const base = $('#lisReemplazar').checked ? (cu.participantes || []).filter(p => p.folio) : (cu.participantes || []).slice();
+        filas = f ? await Constancias.leerArchivo(f, pct => { est.textContent = 'Leyendo la imagen… ' + pct + '%'; }) : Constancias.deTexto(t);
+        filas = filas.map(x => Object.assign({ nombres: '', apellidoPaterno: '', apellidoMaterno: '', curp: '', puesto: '' }, x));
+        if (!filas.length) throw new Error(foto ? 'No pude leer nombres en la imagen. Intente con una foto más nítida y derecha, o capture la lista en Excel.' : 'No encontré participantes. Revise que la tabla tenga nombres y apellidos.');
+        est.textContent = ''; pintarRevision(foto);
+      } catch (ex) { est.textContent = ''; err.textContent = ex.message; err.hidden = false; }
+      $('#lisLeer').disabled = false;
+    }
+    $('#lisLeer').addEventListener('click', leer);
+    $('#lisArchivo').addEventListener('change', leer);
+    $('#formLista').addEventListener('submit', async e => {
+      e.preventDefault(); const btn = e.submitter; btn.disabled = true;
+      try {
+        let nuevos = filas.map(x => ({ nombres: String(x.nombres || '').trim(), apellidoPaterno: String(x.apellidoPaterno || '').trim(), apellidoMaterno: String(x.apellidoMaterno || '').trim(), curp: String(x.curp || '').toUpperCase().replace(/\s+/g, ''), puesto: String(x.puesto || '').trim(), ocupacion: x.ocupacion || '', empresa: x.empresa || '' }))
+          .filter(x => x.nombres || x.apellidoPaterno);
+        if (!nuevos.length) throw new Error('No hay participantes para guardar.');
+        const base = $('#lisReemplazar') && $('#lisReemplazar').checked ? (cu.participantes || []).filter(p => p.folio) : (cu.participantes || []).slice();
         const curps = new Set(base.map(p => p.curp).filter(Boolean));
         const repetidos = nuevos.filter(p => p.curp && curps.has(p.curp)).length;
         nuevos = nuevos.filter(p => !(p.curp && curps.has(p.curp)));
-        const lista = base.concat(nuevos);
-        const malos = nuevos.filter(p => Constancias.validarCURP(p.curp)).length;
-        await guardar('cursos', Object.assign({}, cu, { participantes: lista }));
-        cerrarModal(); toast(nuevos.length + ' participante' + (nuevos.length === 1 ? '' : 's') + ' importado' + (nuevos.length === 1 ? '' : 's') + (repetidos ? ' · ' + repetidos + ' repetido(s) omitido(s)' : '') + (malos ? ' · ' + malos + ' con CURP por revisar' : ''));
-      } catch (ex) { err.textContent = ex.message; err.hidden = false; btn.disabled = false; btn.textContent = 'Importar'; }
+        const malos = nuevos.filter(p => p.curp && Constancias.validarCURP(p.curp)).length;
+        await guardar('cursos', Object.assign({}, cu, { participantes: base.concat(nuevos) }));
+        cerrarModal(); toast(nuevos.length + ' participante' + (nuevos.length === 1 ? '' : 's') + ' guardado' + (nuevos.length === 1 ? '' : 's') + (repetidos ? ' · ' + repetidos + ' repetido(s) omitido(s)' : '') + (malos ? ' · ' + malos + ' con CURP por revisar' : ''));
+      } catch (ex) { err.textContent = ex.message; err.hidden = false; btn.disabled = false; }
     });
   }
 
