@@ -393,7 +393,12 @@ function claveCurso(c) {
   const pal = t.replace(/[^A-Z0-9 ]/g, ' ').split(/\s+/).filter(w => w && ['DE', 'DEL', 'LA', 'LAS', 'LOS', 'EL', 'Y', 'EN', 'PARA', 'A'].indexOf(w) < 0);
   return (pal.map(w => w[0]).join('').slice(0, 6) || 'CUR');
 }
-function folioConstancia(clave, anio, n) { return 'AV.' + clave + anio + '-' + (n < 10 ? '00' : n < 100 ? '0' : '') + n; }
+function folioConstancia(prefijo, n) { return prefijo + '-' + (n < 10 ? '00' : n < 100 ? '0' : '') + n; }
+/** Prefijo del folio tal como se imprime: el que capture el usuario (p. ej. GV.FB2026) o, si no hay, AV.{CLAVE}{AÑO}. */
+function prefijoFolio(c) {
+  const p = String(c.prefijoFolio || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/[^A-Z0-9.\-]/g, '').replace(/^[.\-]+|[.\-]+$/g, '');
+  return p || 'AV.' + claveCurso(c) + String(c.fechaFin || c.fechaInicio || hoyISO()).slice(0, 4);
+}
 function textoFechasCurso(fi, ff) {
   if (!fi) return '';
   ff = ff || fi; const a = deISO(fi), b = deISO(ff);
@@ -421,15 +426,15 @@ function registroConstancia(curso, p, instructorNombre, quien, ahora) {
  * Devuelve { curso, nuevos: [registros], contadores }. La usan la app (modo prueba) y el servidor.
  */
 function asignarFolios(curso, contadores, usados, instructorNombre, quien, ahora) {
-  const clave = claveCurso(curso), anio = String(curso.fechaFin || curso.fechaInicio || hoyISO()).slice(0, 4);
-  const llave = 'PAR_' + clave + '_' + anio; let n = +(contadores[llave] || 0);
+  const clave = claveCurso(curso), anio = String(curso.fechaFin || curso.fechaInicio || hoyISO()).slice(0, 4), pref = prefijoFolio(curso);
+  const llave = curso.prefijoFolio ? 'PAR_' + pref : 'PAR_' + clave + '_' + anio; let n = +(contadores[llave] || 0);
   const ya = {}; (usados || []).forEach(f => { ya[f] = 1; });
   const nuevos = [];
   // Constancia única para toda la empresa: «El personal brigadista de <Razón social>»
   if (curso.tipoConstancia === 'empresa') {
     if (!curso.empresa) throw new Error('Para la constancia de toda la empresa falta la razón social del curso.');
     if (!curso.folioEmpresa) {
-      let f; do { n++; f = folioConstancia(clave, anio, n); } while (ya[f]);
+      let f; do { n++; f = folioConstancia(pref, n); } while (ya[f]);
       curso.folioEmpresa = f;
       nuevos.push(Object.assign(registroConstancia(curso, { folio: f, nombreFijo: textoEmpresa(curso) }, instructorNombre, quien, ahora), { participantes: (curso.participantes || []).length }));
     }
@@ -438,7 +443,7 @@ function asignarFolios(curso, contadores, usados, instructorNombre, quien, ahora
   }
   curso.participantes = (curso.participantes || []).map(p => {
     if (p.folio || p.excluir) return p;
-    let f; do { n++; f = folioConstancia(clave, anio, n); } while (ya[f]);
+    let f; do { n++; f = folioConstancia(pref, n); } while (ya[f]);
     ya[f] = 1; const q = Object.assign({}, p, { folio: f });
     nuevos.push(registroConstancia(curso, q, instructorNombre, quien, ahora));
     return q;
@@ -455,4 +460,4 @@ function constanciaPublica(r) {
   };
 }
 
-if (typeof module !== 'undefined') module.exports = { textoEmpresa, asignarFolios, constanciaPublica, claveCurso, textoFechasCurso, festivos, sumarHabiles, esHabil, validarEvento, avanceServicio, calcularAvisos, avisosWhatsApp, fechaAviso, resumenCobro, telWhatsApp, etapasServicio };
+if (typeof module !== 'undefined') module.exports = { prefijoFolio, textoEmpresa, asignarFolios, constanciaPublica, claveCurso, textoFechasCurso, festivos, sumarHabiles, esHabil, validarEvento, avanceServicio, calcularAvisos, avisosWhatsApp, fechaAviso, resumenCobro, telWhatsApp, etapasServicio };

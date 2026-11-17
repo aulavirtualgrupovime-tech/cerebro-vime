@@ -1211,7 +1211,7 @@
       dato('Sede', esc(cu.sede || '—')) + dato('Capacitador', ins ? esc(((ins.titulo || '') + ' ' + ins.nombre).trim()) + ((ins.firmaData || ins.firmaDriveId) ? '' : ' <span class="etiqueta" style="background:var(--rojo)">sin firma</span>') : '<span style="color:var(--rojo)">Sin asignar</span>') +
       dato('Constancia de participación', emp ? 'Una para toda la empresa: «' + esc(textoEmpresa(cu)) + '»' : 'Una por participante') +
       dato('DC-3', dc3 ? '<b style="color:var(--verde)">APLICA</b>' : '<b style="color:var(--gris)">NO APLICA</b>') +
-      dato('Folios', 'AV.' + esc(claveCurso(cu)) + esc(anio) + (emp ? '-NNN (uno para la empresa)' : '-001, -002…')) + '</div></div>' +
+      dato('Folios', esc(prefijoFolio(cu)) + (emp ? '-NNN (uno para la empresa)' : '-001, -002…')) + '</div></div>' +
       '<div class="tarjeta"><div class="tarjeta-cab"><h3>Participantes (' + ps.length + ')</h3><div style="display:flex;gap:8px;flex-wrap:wrap">' +
       '<button class="btn sec" data-acc="importarLista" data-id="' + cu.id + '">📥 Importar lista (Excel, Word o foto)</button><button class="btn acento" data-acc="nuevoParticipante" data-id="' + cu.id + '">+ Agregar</button></div></div>' +
       (emp ? '<p class="sub">Con constancia para toda la empresa la lista es opcional' + (dc3 ? ', pero se necesita para las DC-3.' : '; sirve como registro de asistencia.') + '</p>' : '') +
@@ -1242,7 +1242,8 @@
     const val = Object.assign({ modalidad: 'Presencial', instructorId: (instructores()[0] || {}).id || '', tipoConstancia: 'individual', aplicaDC3: 'si', leyendaEmpresa: 'El personal brigadista de' }, pre || {}, cu || {});
     const campos = [
       { k: 'curso', t: 'Nombre del curso', req: true, ancho: true },
-      { k: 'clave', t: 'Clave para el folio', ayuda: 'Letras o números, p. ej. PCO o FBR. Si la deja vacía se forma con las iniciales del curso.' },
+      { k: 'prefijoFolio', t: 'Prefijo del folio', ayuda: 'Se imprime tal cual, seguido de -001, -002… Ej.: GV.FB2026 → GV.FB2026-001. Si lo deja vacío: AV.{clave}{año}.' },
+      { k: 'clave', t: 'Clave corta del curso', ayuda: 'Para nombres de archivo y DC-3, p. ej. FBR. Si la deja vacía se forma con las iniciales.' },
       { k: 'modalidad', t: 'Modalidad', tipo: 'select', opciones: MODALIDADES },
       { k: 'fechaInicio', t: 'Fecha de inicio', tipo: 'date', req: true },
       { k: 'fechaFin', t: 'Fecha de término', tipo: 'date', ayuda: 'Déjela vacía si fue un solo día.' },
@@ -1258,29 +1259,65 @@
     ];
     formulario(cu ? 'Editar curso' : 'Nuevo curso', campos, val, async v => {
       if (v.clave) v.clave = String(v.clave).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
+      v.prefijoFolio = String(v.prefijoFolio || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/[^A-Z0-9.\-]/g, '').replace(/^[.\-]+|[.\-]+$/g, '').slice(0, 24);
       if (v.fechaFin && v.fechaFin < v.fechaInicio) return { error: 'La fecha de término es anterior a la de inicio.' };
-      if (cu && tieneFolios(cu) && v.clave !== (cu.clave || '') ) return { error: 'Ya hay folios emitidos con la clave anterior; no se puede cambiar la clave.' };
+      let reasignar = false;
+      if (cu && tieneFolios(cu) && prefijoFolio(Object.assign({}, cu, v)) !== prefijoFolio(cu)) {
+        const n = cu.folioEmpresa ? 1 : (cu.participantes || []).filter(p => p.folio).length;
+        if (!confirm('Ya hay ' + n + ' folio(s) emitidos con el prefijo ' + prefijoFolio(cu) + '.\n\nSi continúa, esos folios quedarán CANCELADOS en el registro y se asignarán folios nuevos con el prefijo ' + prefijoFolio(Object.assign({}, cu, v)) + '. Deberá volver a generar e imprimir las constancias.\n\n¿Continuar?')) return { error: 'No se cambió el prefijo.' };
+        reasignar = true;
+      }
       if (cu && tieneFolios(cu) && v.tipoConstancia !== (cu.tipoConstancia || 'individual')) return { error: 'Ya hay folios emitidos; no se puede cambiar el tipo de constancia de este curso.' };
       if (!v.empresa && v.servicioId) { const { c } = cadena(servicio(v.servicioId)); v.empresa = c.razonSocial || ''; }
       if (v.tipoConstancia === 'empresa' && !v.empresa) return { error: 'Para la constancia de toda la empresa escriba la razón social.' };
       if (cu && cu.folioEmpresa && (v.empresa !== cu.empresa || v.leyendaEmpresa !== cu.leyendaEmpresa)) return { error: 'La constancia de la empresa ya tiene folio con esa razón social y leyenda; no se pueden cambiar.' };
       v.leyendaEmpresa = v.leyendaEmpresa || 'El personal brigadista de';
+      if (reasignar) {
+        const viejos = cu.folioEmpresa ? [cu.folioEmpresa] : cu.participantes.filter(p => p.folio).map(p => p.folio);
+        for (const f of viejos) { const r = registroDe(f); if (r && r.estado !== 'cancelada') await Datos.guardar('constancias', Object.assign({}, r, { estado: 'cancelada', canceladaPor: Datos.usuario().nombre, fechaCancelacion: hoyISO(), motivo: 'Reemplazada por cambio de prefijo de folio' })); }
+        const limpio = Object.assign({}, cu, v, { folioEmpresa: '', generadas: '', participantes: (cu.participantes || []).map(p => Object.assign({}, p, { folio: '' })) });
+        const g = await guardar('cursos', limpio);
+        const ins = instructorDe(g.instructorId);
+        const r = await Datos.emitir(g, ins ? ((ins.titulo || '') + ' ' + ins.nombre).trim() : '');
+        refrescarDB(); toast(viejos.length + ' folio(s) cancelado(s) y ' + r.nuevos.length + ' nuevo(s): ' + ((r.nuevos[0] || {}).folio || ''));
+        return;
+      }
       const g = await guardar('cursos', Object.assign({ participantes: [] }, pre || {}, cu || {}, v), cu ? 'Curso actualizado' : 'Curso creado');
       if (!cu) location.hash = '#/curso/' + g.id;
     }, cu && !tieneFolios(cu) ? { borrar: async () => { await borrar('cursos', cu.id, 'Curso eliminado'); location.hash = '#/capacitaciones'; }, borrarPregunta: '¿Eliminar este curso y su lista de participantes?' } : null);
   }
 
-  /** Reduce la firma a un PNG ligero (máx. 900 px de ancho) conservando la transparencia. */
+  /** Firma lista para imprimir: quita el fondo blanco o claro (queda transparente), recorta los márgenes vacíos
+   *  y la reduce a un PNG ligero (máx. 900 px de ancho). Sirve para fotos, escaneos y PNG con fondo. */
   function prepararFirma(file) {
     return new Promise((ok, mal) => {
       const img = new Image(); const u = URL.createObjectURL(file);
       img.onload = () => {
-        const k = Math.min(1, 900 / img.width); const cv = document.createElement('canvas');
-        cv.width = Math.round(img.width * k); cv.height = Math.round(img.height * k);
-        cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height); URL.revokeObjectURL(u);
-        cv.toBlob(b => b ? ok(b) : mal(new Error('No se pudo leer la imagen de la firma.')), 'image/png');
+        URL.revokeObjectURL(u);
+        const k = Math.min(1, 900 / img.width); const W = Math.max(1, Math.round(img.width * k)), H = Math.max(1, Math.round(img.height * k));
+        const cv = document.createElement('canvas'); cv.width = W; cv.height = H; const cx = cv.getContext('2d');
+        cx.drawImage(img, 0, 0, W, H);
+        const d = cx.getImageData(0, 0, W, H), px = d.data;
+        // fondo = tono del papel (percentil claro de la imagen); lo que se parece al papel se vuelve transparente
+        const lum = []; for (let i = 0; i < px.length; i += 16) if (px[i + 3] > 200) lum.push(0.3 * px[i] + 0.59 * px[i + 1] + 0.11 * px[i + 2]);
+        lum.sort((a, b) => a - b);
+        // si casi todo ya es transparente (PNG limpio), el papel no existe: solo se recorta
+        const papel = lum.length > (W * H / 16) * 0.3 ? Math.max(120, Math.min(250, lum[Math.floor(lum.length * 0.9)])) : 999, corte = papel - 45;
+        let x0 = W, y0 = H, x1 = -1, y1 = -1;
+        for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+          const i = (y * W + x) * 4, L = 0.3 * px[i] + 0.59 * px[i + 1] + 0.11 * px[i + 2];
+          const a = papel > 255 ? px[i + 3] : px[i + 3] * (L >= papel - 12 ? 0 : L <= corte ? 1 : (papel - 12 - L) / (papel - 12 - corte));
+          px[i + 3] = Math.round(a);
+          if (a > 40) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+        }
+        cx.putImageData(d, 0, 0);
+        if (x1 < 0) { mal(new Error('No encontré trazos en la imagen de la firma.')); return; }
+        const m = 6; x0 = Math.max(0, x0 - m); y0 = Math.max(0, y0 - m); x1 = Math.min(W - 1, x1 + m); y1 = Math.min(H - 1, y1 + m);
+        const out = document.createElement('canvas'); out.width = x1 - x0 + 1; out.height = y1 - y0 + 1;
+        out.getContext('2d').drawImage(cv, x0, y0, out.width, out.height, 0, 0, out.width, out.height);
+        out.toBlob(b => b ? ok(b) : mal(new Error('No se pudo leer la imagen de la firma.')), 'image/png');
       };
-      img.onerror = () => mal(new Error('La firma debe ser una imagen PNG o JPG.')); img.src = u;
+      img.onerror = () => { URL.revokeObjectURL(u); mal(new Error('La firma debe ser una imagen PNG o JPG.')); }; img.src = u;
     });
   }
   function formInstructor(ins) {
@@ -1302,7 +1339,7 @@
       } else if (!nuevo.firmaData && !nuevo.firmaDriveId) return { error: 'Suba la firma digital (imagen PNG, de preferencia con fondo transparente).' };
       const lista = instructores().filter(x => x.id !== nuevo.id).concat([nuevo]);
       await guardarInstructores(lista, 'Capacitador guardado');
-    }, Object.assign({ extraHtml: '<div class="campo ancho"><label>Firma digital' + (ins && (ins.firmaData || ins.firmaDriveId) ? ' (ya cargada; suba otra solo para reemplazarla)' : ' *') + '</label><input type="file" id="insFirma" accept="image/png,image/jpeg"><span class="ayuda">PNG con fondo transparente de preferencia. Se imprime arriba del nombre en cada constancia.</span>' +
+    }, Object.assign({ extraHtml: '<div class="campo ancho"><label>Firma digital' + (ins && (ins.firmaData || ins.firmaDriveId) ? ' (ya cargada; suba otra solo para reemplazarla)' : ' *') + '</label><input type="file" id="insFirma" accept="image/png,image/jpeg"><span class="ayuda">PNG o JPG (foto o escaneo). El fondo blanco se quita solo. Se imprime arriba del nombre en cada constancia.</span>' +
       (ins && ins.firmaData ? '<img src="' + esc(ins.firmaData) + '" alt="Firma" style="max-height:70px;margin-top:6px;background:#fff;border:1px solid var(--gris-claro);border-radius:6px;padding:4px">' : '') + '</div>' },
       ins ? { borrar: async () => guardarInstructores(instructores().filter(x => x.id !== ins.id), 'Capacitador eliminado'), borrarPregunta: '¿Eliminar este capacitador? Las constancias ya emitidas no cambian.' } : {}));
   }
@@ -1411,7 +1448,8 @@
   async function bytesFirma(ins) {
     const b = await Datos.obtenerArchivo({ url: ins.firmaData || '', driveId: ins.firmaDriveId || '' });
     if (!b) throw new Error('No pude obtener la firma de ' + ins.nombre + '. Vuelva a subirla en Capacitaciones › Capacitadores.');
-    return { bytes: new Uint8Array(await b.arrayBuffer()), tipo: b.type || 'image/png' };
+    let limpia = b; try { limpia = await prepararFirma(b); } catch (e) { console.warn(e); }   // también limpia firmas subidas antes con fondo
+    return { bytes: new Uint8Array(await limpia.arrayBuffer()), tipo: 'image/png' };
   }
   let ultimoLote = null;
   async function generarConstancias(cuId) {
@@ -1425,7 +1463,7 @@
     try {
       const firma = await bytesFirma(ins);
       const res = await Constancias.generar({ curso: Object.assign({}, cu, { fechasTexto: fechasCurso(cu) }), participantes: ps, instructor: Object.assign({}, ins, { firma }), urlVerificacion: CONFIG.VERIFICACION_URL });
-      const clave = claveCurso(cu) + String(cu.fechaFin || cu.fechaInicio).slice(0, 4);
+      const clave = prefijoFolio(cu).replace(/[^A-Z0-9-]+/g, '');
       ultimoLote = { cuId, res, nombreLote: 'LOTE_PARTICIPACION_' + clave + '.pdf', nombreZip: 'Constancias_' + clave + '.zip' };
       await Datos.guardar('cursos', Object.assign({}, cu, { generadas: new Date().toISOString() })); DB = Datos.vista();
       $('#modalCuerpo').innerHTML = '<p>Listas <b>' + ps.length + '</b> constancias (' + esc(ps[0].folio) + (ps.length > 1 ? ' a ' + esc(ps[ps.length - 1].folio) : '') + ').</p>' +
