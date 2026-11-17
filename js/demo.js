@@ -74,7 +74,15 @@ function crearDatosDemo() {
     R({ id: 'doc_5', servicioId: 'ser_4', resolucionId: 'rsl_3', categoria: 'escrito', escritoMes: anio + '-10', nombre: 'Acuse escrito octubre.pdf', url: 'https://drive.google.com/', autor: 'Samuel', fecha: anio + '-10-05' }),
     R({ id: 'doc_6', servicioId: 'ser_6', resolucionId: 'rsl_4', categoria: 'oficio', nombre: 'Oficio APROBADO.pdf', url: 'https://drive.google.com/', autor: 'Directora', fecha: anio + '-04-28' })
   ];
-  const ajustes = [R({ id: 'logos', lista: [{ id: 'logo_demo', nombre: 'Super Sur (ficticio)', url: LOGOS_FIJOS.demoCliente }] })];
+  const ajustes = [R({ id: 'logos', lista: [{ id: 'logo_demo', nombre: 'Super Sur (ficticio)', url: LOGOS_FIJOS.demoCliente }] }),
+    R({ id: 'instructores', lista: [{ id: 'ins_demo', titulo: 'Lic.', nombre: 'Instructora Ficticia Pérez', cargo: 'Capacitador', registros: ['Registro STPS: XXXX-000000-XXX-0000 (ficticio)', 'Registro Protección Civil: CEPC/RT/0000/2026 (ficticio)'] }] }),
+    R({ id: 'folios', contadores: {} })];
+  const cursos = [R({ id: 'cur_demo', curso: 'Formación de Brigadas', clave: 'FBR', modalidad: 'En línea', fechaInicio: d(-8), fechaFin: d(-8), horas: 2, sede: '', instructorId: 'ins_demo', eventoId: 'eve_8', servicioId: 'ser_10', empresa: 'Colegio Ficticio de Cuernavaca, A.C.',
+    participantes: [
+      { nombres: 'Juan', apellidoPaterno: 'Pérez', apellidoMaterno: 'García', curp: 'PEGJ900215HMSRRN05', puesto: 'Brigadista' },
+      { nombres: 'María', apellidoPaterno: 'López', apellidoMaterno: 'Hernández', curp: 'LOHM880530MMSPRR04', puesto: 'Coordinadora' },
+      { nombres: 'Andrés', apellidoPaterno: 'Ramírez', apellidoMaterno: 'Santos', curp: 'RASA950812HMSMTN02', puesto: 'Brigadista' }] })];
+  const constancias = [];
   const responsables = [
     R({ id: 'res_1', nombre: 'Proveedor externo: Cruz Ficticia' }),
     R({ id: 'res_2', nombre: 'Brigada interna del cliente' })
@@ -91,5 +99,5 @@ function crearDatosDemo() {
     cobro('ser_9', 15000, true, [m('pago', mesActual + '02', 7500)]),
     cobro('ser_10', 7000, false, [])
   ];
-  return { clientes, inmuebles, servicios, eventos, pendientes, notas, documentos, responsables, ajustes, cobros };
+  return { clientes, inmuebles, servicios, eventos, pendientes, notas, documentos, responsables, ajustes, cursos, constancias, cobros };
 }

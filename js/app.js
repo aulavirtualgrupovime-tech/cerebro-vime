@@ -304,14 +304,15 @@
   /* ======================= Vistas ======================= */
   const RUTAS = {
     panel: vistaPanel, clientes: vistaClientes, cliente: vistaCliente, inmueble: vistaInmueble, servicio: vistaServicio,
-    calendario: vistaCalendario, avisos: vistaAvisos, pagos: vistaPagos, ajustes: vistaAjustes
+    calendario: vistaCalendario, avisos: vistaAvisos, pagos: vistaPagos, ajustes: vistaAjustes,
+    capacitaciones: vistaCapacitaciones, curso: vistaCurso
   };
   function ruta() { const p = (location.hash || '#/panel').slice(2).split('/'); return { nombre: RUTAS[p[0]] ? p[0] : 'panel', id: p[1] }; }
 
   function pintar() {
     if (!DB) return;
     const r = ruta();
-    document.querySelectorAll('#menu a').forEach(a => a.classList.toggle('activo', a.dataset.ruta === r.nombre || (r.nombre === 'cliente' || r.nombre === 'inmueble' || r.nombre === 'servicio') && a.dataset.ruta === 'clientes'));
+    document.querySelectorAll('#menu a').forEach(a => a.classList.toggle('activo', a.dataset.ruta === r.nombre || (r.nombre === 'cliente' || r.nombre === 'inmueble' || r.nombre === 'servicio') && a.dataset.ruta === 'clientes' || r.nombre === 'curso' && a.dataset.ruta === 'capacitaciones'));
     $('#menuPagos').hidden = !Datos.esDirectora();
     const avisos = calcularAvisos(DB, hoyISO(), Datos.esDirectora());
     const nUrg = avisos.filter(a => a.nivel !== 'azul').length + avisosWhatsApp(DB).length;
@@ -491,6 +492,9 @@
       const n = esSim ? (+(s.datos || {}).numSimulacros || 1) : (+(s.datos || {}).numCursos || 0);
       h += '<div class="tarjeta"><div class="tarjeta-cab"><h3>' + (esSim ? 'Simulacros' : 'Capacitaciones') + ' (' + evs.filter(e => !e.cancelado).length + (n ? ' de ' + n : '') + ')</h3><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn sec" data-acc="importarPrograma" data-id="' + s.id + '">📄 Importar programa (PDF o Word)</button><button class="btn acento" data-acc="nuevoEvento" data-id="' + s.id + '">+ Programar ' + (esSim ? 'simulacro' : 'capacitación') + '</button></div></div>' +
         (evs.length ? evs.map(ev => '<div style="border:1px solid var(--gris-claro);border-radius:8px;padding:4px 12px;margin-bottom:10px">' + htmlEventoFila(ev, false, true) + (ev.cancelado ? '' : htmlEtapas(ev, etapasEvento(ev), 'eventos')) +
+          (ev.clase !== 'simulacro' && !ev.cancelado ? (() => { const cu = (DB.cursos || []).find(x => x.eventoId === ev.id); const n = cu ? (cu.participantes || []).length : 0, f = cu ? (cu.participantes || []).filter(p => p.folio).length : 0;
+            return '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 0 2px"><span class="sub" style="font-weight:600">Participantes y constancias:</span>' + (cu ? '<span class="etiqueta" style="background:' + (n && f === n ? 'var(--verde)' : 'var(--azul)') + '">' + n + ' participante' + (n === 1 ? '' : 's') + ' · ' + f + ' constancia' + (f === 1 ? '' : 's') + '</span>' : '<span class="sub">sin lista</span>') +
+              '<button class="btn sec chico" data-acc="constanciasEvento" data-id="' + ev.id + '">🎓 ' + (cu ? 'Abrir' : 'Crear lista') + '</button></div>'; })() : '') +
           (ev.clase === 'simulacro' && !ev.cancelado ? '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 0 2px"><span class="sub" style="font-weight:600">Guion y cronología:</span>' +
             (tieneGuion(ev) ? '<span class="etiqueta" style="background:var(--verde)">' + (ev.guion.cronologia || []).filter(c => !c.fase).length + ' actividades</span>' : '<span class="sub">sin capturar</span>') +
             '<button class="btn sec chico" data-acc="verGuion" data-id="' + ev.id + '">👁 Ver</button><button class="btn sec chico" data-acc="editarGuion" data-id="' + ev.id + '">✎ Editar</button></div>' +
@@ -971,6 +975,23 @@
     ir: el => { location.hash = el.dataset.h; },
     irPagos: () => { estado.pestanaServicio = 'pagos'; },
     nuevoCliente: () => formCliente(),
+    nuevoCurso: () => formCurso(),
+    editarCurso: el => formCurso(cursoPorId(el.dataset.id)),
+    nuevoInstructor: () => formInstructor(),
+    editarInstructor: el => formInstructor(instructorDe(el.dataset.id)),
+    importarLista: el => dialogoLista(el.dataset.id),
+    nuevoParticipante: el => formParticipante(el.dataset.id),
+    editarParticipante: el => formParticipante(el.dataset.id, +el.dataset.k),
+    quitarParticipante: async el => { const cu = cursoPorId(el.dataset.id); const p = cu.participantes[+el.dataset.k]; if (!confirm('¿Quitar a ' + nombreParticipante(p) + ' de la lista?')) return; await guardar('cursos', Object.assign({}, cu, { participantes: cu.participantes.filter((x, j) => j !== +el.dataset.k) }), 'Participante quitado'); },
+    emitirCurso: el => emitirCurso(el.dataset.id),
+    generarConstancias: el => generarConstancias(el.dataset.id),
+    bajarLote: () => { if (ultimoLote) descargar(new Blob([ultimoLote.res.lote], { type: 'application/pdf' }), ultimoLote.nombreLote); },
+    bajarZip: async () => { if (!ultimoLote) return; try { descargar(await Constancias.zip(ultimoLote.res, ultimoLote.nombreLote), ultimoLote.nombreZip); } catch (e) { toast(e.message, true); } },
+    loteDrive: () => loteDrive(),
+    ordenClaude: el => ordenClaude(el.dataset.id),
+    cancelarConst: el => estadoConstancia(el.dataset.id, true),
+    reactivarConst: el => estadoConstancia(el.dataset.id, false),
+    constanciasEvento: el => constanciasEvento(el.dataset.id),
     editarCliente: el => formCliente(porId('clientes', el.dataset.id)),
     nuevoInmueble: el => formInmueble(null, el.dataset.id),
     editarInmueble: el => { const i = porId('inmuebles', el.dataset.id); formInmueble(i, i.clienteId); },
@@ -1097,6 +1118,300 @@
     });
   }
 
+  /* ======================= Capacitaciones: cursos, participantes y constancias ======================= */
+  const MODALIDADES = ['Presencial', 'En línea', 'Mixta'];
+  const regAjuste = id => (DB.ajustes || []).find(x => x.id === id);
+  function instructores() { return (regAjuste('instructores') || {}).lista || []; }
+  function instructorDe(id) { return instructores().find(x => x.id === id) || null; }
+  async function guardarInstructores(lista, msg) { await guardar('ajustes', Object.assign({ id: 'instructores' }, regAjuste('instructores') || {}, { lista }), msg); }
+  const cursoPorId = id => porId('cursos', id);
+  function quienCurso(cu) {
+    const s = cu.servicioId && servicio(cu.servicioId);
+    if (s) { const { i, c } = cadena(s); return nombreCli(c) + ' · ' + (i.nombreComercial || ''); }
+    return cu.empresa || 'Grupo abierto';
+  }
+  function fechasCurso(cu) { return cu.fechasTexto || textoFechasCurso(cu.fechaInicio, cu.fechaFin); }
+  function registroDe(folio) { return (DB.constancias || []).find(x => x.folio === folio); }
+  function problemas(p, todos) {
+    const e = [];
+    if (!p.nombres) e.push('Falta nombre');
+    if (!p.apellidoPaterno) e.push('Falta apellido paterno');
+    const v = Constancias.validarCURP(p.curp); if (v) e.push(v);
+    if (p.curp && todos.filter(x => x.curp === p.curp).length > 1) e.push('CURP repetida');
+    return e;
+  }
+  function descargar(blob, nombre) {
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = nombre;
+    document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+  }
+  function urlValidacion(folio) { return 'verifica.html' + (folio ? '?f=' + encodeURIComponent(folio) : ''); } // misma página pública que abre el QR
+
+  function vistaCapacitaciones() {
+    titulo('Capacitaciones');
+    const cursos = (DB.cursos || []).slice().sort((a, b) => String(b.fechaInicio || '').localeCompare(String(a.fechaInicio || '')));
+    const regs = DB.constancias || [];
+    const nPart = cursos.reduce((t, c) => t + (c.participantes || []).length, 0);
+    const f = norm(estado.filtroConst || '');
+    const lista = regs.filter(r => !f || norm(r.folio + ' ' + r.nombre + ' ' + r.curso).includes(f)).sort((a, b) => String(b.emitida || '').localeCompare(String(a.emitida || '')) || String(b.folio).localeCompare(String(a.folio)));
+    return '<div class="kpis">' +
+      '<div class="kpi"><b>' + cursos.length + '</b><span>Cursos registrados</span></div>' +
+      '<div class="kpi"><b>' + nPart + '</b><span>Participantes</span></div>' +
+      '<div class="kpi"><b>' + regs.filter(r => r.estado !== 'cancelada').length + '</b><span>Constancias vigentes</span></div>' +
+      '<div class="kpi"><b>' + instructores().length + '</b><span>Capacitadores</span></div></div>' +
+      '<div class="rejilla dos"><div>' +
+      '<div class="tarjeta"><div class="tarjeta-cab"><h3>Cursos impartidos</h3><button class="btn" data-acc="nuevoCurso">+ Nuevo curso</button></div>' +
+      '<p class="sub">Cada curso guarda su lista de participantes, el capacitador y los folios de sus constancias. Desde una capacitación del calendario también puede abrir su curso con «Participantes y constancias».</p>' +
+      (cursos.length ? '<div class="lista">' + cursos.map(cu => {
+        const ps = cu.participantes || []; const em = ps.filter(p => p.folio).length;
+        return '<div class="fila clic" data-acc="ir" data-h="#/curso/' + cu.id + '"><div style="width:6px;align-self:stretch;border-radius:3px;background:var(--azul)"></div><div class="crece"><b>' + esc(cu.curso) + '</b>' +
+          (ps.length && em === ps.length ? ' <span class="etiqueta" style="background:var(--verde)">Constancias emitidas</span>' : em ? ' <span class="etiqueta" style="background:var(--ambar)">' + em + ' de ' + ps.length + ' emitidas</span>' : '') +
+          '<div class="sub">' + esc(quienCurso(cu)) + ' · ' + esc(fechaCorta(cu.fechaInicio)) + (cu.fechaFin && cu.fechaFin !== cu.fechaInicio ? ' al ' + esc(fechaCorta(cu.fechaFin)) : '') + ' · ' + esc(cu.modalidad || '') + ' · ' + esc(cu.horas || '—') + ' h · ' + ps.length + ' participante' + (ps.length === 1 ? '' : 's') + '</div></div></div>';
+      }).join('') + '</div>' : '<div class="vacio">Aún no hay cursos. Cree uno con «+ Nuevo curso».</div>') + '</div></div>' +
+      '<div><div class="tarjeta"><div class="tarjeta-cab"><h3>Capacitadores</h3><button class="btn chico" data-acc="nuevoInstructor">+ Agregar</button></div>' +
+      '<p class="sub">Nombre, registros y firma digital que se imprimen en la constancia (un capacitador por constancia).</p>' +
+      (instructores().length ? instructores().map(x => '<div class="fila"><div class="avatar">' + esc((x.nombre || '?')[0]) + '</div><div class="crece"><b>' + esc(((x.titulo || '') + ' ' + x.nombre).trim()) + '</b><div class="sub">' + esc((x.registros || []).filter(Boolean).join(' · ') || 'Sin registros') + '</div></div>' +
+        ((x.firmaData || x.firmaDriveId) ? '<span class="etiqueta" style="background:var(--verde)">Firma ✓</span>' : '<span class="etiqueta" style="background:var(--rojo)">Sin firma</span>') +
+        '<button class="btn sec chico" data-acc="editarInstructor" data-id="' + x.id + '">Editar</button></div>').join('') : '<div class="vacio">Agregue al menos un capacitador con su firma.</div>') + '</div>' +
+      '<div class="tarjeta"><h3>Validación pública</h3><p class="sub">Cada constancia lleva un folio y un código QR. Cualquier persona puede escanearlo o abrir la página de validación y escribir el folio: verá el nombre, el curso, las fechas, las horas, el capacitador y si la constancia está vigente. La CURP nunca se muestra.</p>' +
+      '<a class="btn sec" href="' + esc(urlValidacion('')) + '" target="_blank" rel="noopener">Abrir página de validación</a></div></div></div>' +
+      '<div class="tarjeta"><div class="tarjeta-cab"><h3>Registro de constancias emitidas (' + regs.length + ')</h3><input class="buscador" id="buscarConst" placeholder="Buscar folio, nombre o curso…" value="' + esc(estado.filtroConst || '') + '"></div>' +
+      (lista.length ? '<div style="overflow-x:auto"><table class="tabla"><thead><tr><th>Folio</th><th>Participante</th><th>Curso</th><th>Emitida</th><th>Estado</th><th></th></tr></thead><tbody>' +
+        lista.slice(0, 200).map(r => '<tr><td><b>' + esc(r.folio) + '</b></td><td>' + esc(r.nombre) + '</td><td>' + esc(r.curso) + '</td><td>' + esc(fechaCorta(String(r.emitida || '').slice(0, 10))) + '</td><td>' +
+          (r.estado === 'cancelada' ? '<span class="etiqueta" style="background:var(--rojo)">Cancelada</span>' : '<span class="etiqueta" style="background:var(--verde)">Vigente</span>') + '</td><td style="white-space:nowrap">' +
+          '<a class="btn-icono" href="' + esc(urlValidacion(r.folio)) + '" target="_blank" rel="noopener" title="Ver validación pública">🔎</a>' +
+          (r.estado === 'cancelada' ? '<button class="btn sec chico" data-acc="reactivarConst" data-id="' + esc(r.folio) + '">Reactivar</button>' : '<button class="btn sec chico" data-acc="cancelarConst" data-id="' + esc(r.folio) + '">Cancelar</button>') + '</td></tr>').join('') +
+        '</tbody></table></div>' : '<div class="vacio">' + (regs.length ? 'Sin resultados.' : 'Aún no se ha emitido ninguna constancia.') + '</div>') + '</div>';
+  }
+  const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+
+  function vistaCurso(id) {
+    const cu = cursoPorId(id); if (!cu) return '<div class="vacio">Curso no encontrado.</div>';
+    titulo('Curso · ' + cu.curso);
+    const ins = instructorDe(cu.instructorId);
+    const ps = cu.participantes || [];
+    const pend = ps.filter(p => !p.folio && !p.excluir);
+    const conErr = ps.filter(p => problemas(p, ps).length);
+    const emitidas = ps.filter(p => p.folio);
+    const anio = String(cu.fechaFin || cu.fechaInicio || '').slice(0, 4);
+    const dato = (t, v) => '<div class="dato"><small>' + t + '</small><div>' + v + '</div></div>';
+    return '<div class="migas"><a href="#/capacitaciones">Capacitaciones</a> › ' + esc(cu.curso) + '</div>' +
+      '<div class="tarjeta"><div class="tarjeta-cab"><div><span class="etiqueta" style="background:var(--azul)">Curso</span><h2 style="margin-top:8px">' + esc(cu.curso) + '</h2><div class="sub">' + esc(quienCurso(cu)) + '</div></div>' +
+      '<button class="btn sec chico" data-acc="editarCurso" data-id="' + cu.id + '">Editar</button></div>' +
+      '<div class="datos">' + dato('Modalidad', esc(cu.modalidad || '—')) + dato('Fechas', esc(fechasCurso(cu) || '—')) + dato('Duración', esc(cu.horas || '—') + ' horas') +
+      dato('Sede', esc(cu.sede || '—')) + dato('Capacitador', ins ? esc(((ins.titulo || '') + ' ' + ins.nombre).trim()) + ((ins.firmaData || ins.firmaDriveId) ? '' : ' <span class="etiqueta" style="background:var(--rojo)">sin firma</span>') : '<span style="color:var(--rojo)">Sin asignar</span>') +
+      dato('Folios', 'AV.' + esc(claveCurso(cu)) + esc(anio) + '-001, -002…') + '</div></div>' +
+      '<div class="tarjeta"><div class="tarjeta-cab"><h3>Participantes (' + ps.length + ')</h3><div style="display:flex;gap:8px;flex-wrap:wrap">' +
+      '<button class="btn sec" data-acc="importarLista" data-id="' + cu.id + '">📥 Importar Excel / pegar lista</button><button class="btn acento" data-acc="nuevoParticipante" data-id="' + cu.id + '">+ Agregar</button></div></div>' +
+      (conErr.length ? '<div class="aviso-it ambar"><div><b>' + conErr.length + ' participante' + (conErr.length === 1 ? '' : 's') + ' con datos por revisar</b><span>La constancia de participación solo exige el nombre; la CURP correcta es obligatoria para la DC-3.</span></div></div>' : '') +
+      (ps.length ? '<div style="overflow-x:auto"><table class="tabla"><thead><tr><th>#</th><th>Nombre</th><th>CURP</th><th>Puesto</th><th>Folio</th><th></th></tr></thead><tbody>' +
+        ps.map((p, k) => {
+          const pr = problemas(p, ps); const r = p.folio && registroDe(p.folio);
+          return '<tr><td>' + (k + 1) + '</td><td><b>' + esc(nombreParticipante(p)) + '</b>' + (pr.length ? '<div class="sub" style="color:var(--rojo)">' + esc(pr.join(' · ')) + '</div>' : '') + '</td><td>' + esc(p.curp || '—') + '</td><td>' + esc(p.puesto || '') + '</td><td>' +
+            (p.folio ? '<b>' + esc(p.folio) + '</b>' + (r && r.estado === 'cancelada' ? ' <span class="etiqueta" style="background:var(--rojo)">Cancelada</span>' : '') : '<span class="sub">Por emitir</span>') + '</td><td style="white-space:nowrap">' +
+            '<button class="btn-icono" data-acc="editarParticipante" data-id="' + cu.id + '" data-k="' + k + '" title="Editar">✎</button>' +
+            (p.folio ? '' : '<button class="btn-icono" data-acc="quitarParticipante" data-id="' + cu.id + '" data-k="' + k + '" title="Quitar">✕</button>') + '</td></tr>';
+        }).join('') + '</tbody></table></div>' : '<div class="vacio">Importe la lista desde Excel (plantilla de la skill o cualquier tabla con Nombre, Apellidos y CURP) o péguela desde la hoja de cálculo.</div>') + '</div>' +
+      '<div class="tarjeta"><h3>Constancias de participación</h3>' +
+      '<div class="etapa' + (ins && (ins.firmaData || ins.firmaDriveId) ? ' hecha' : '') + '"><span class="txt">1. Capacitador con firma digital asignado</span></div>' +
+      '<div class="etapa' + (ps.length && !pend.length ? ' hecha' : '') + '"><span class="txt">2. Folios asignados y registrados para validación (' + emitidas.length + ' de ' + ps.length + ')</span>' +
+      (pend.length ? '<button class="btn chico" data-acc="emitirCurso" data-id="' + cu.id + '">Asignar ' + pend.length + ' folio' + (pend.length === 1 ? '' : 's') + '</button>' : '') + '</div>' +
+      '<div class="etapa' + (cu.generadas ? ' hecha' : '') + '"><span class="txt">3. Constancias en PDF (lote para imprimir + una por participante)' + (cu.generadas ? ' <span class="sub">· última vez ' + esc(fechaCorta(String(cu.generadas).slice(0, 10))) + '</span>' : '') + '</span>' +
+      (emitidas.length ? '<button class="btn acento chico" data-acc="generarConstancias" data-id="' + cu.id + '">⬇ Generar PDF</button>' : '') + '</div>' +
+      '<p class="sub" style="margin-top:10px">El PDF se arma en este equipo con el diseño oficial (logos de Aula Virtual y Grupo VIME, un capacitador, folio y QR). Los folios nunca se repiten: los asigna el servidor.</p></div>' +
+      '<div class="tarjeta"><div class="tarjeta-cab"><h3>DC-3 y material didáctico</h3><button class="btn sec" data-acc="ordenClaude" data-id="' + cu.id + '">🤖 Orden para Claude</button></div>' +
+      '<p class="sub">Las DC-3 (formato STPS en Word) y el material didáctico (Manual del Participante, Guía Visual y póster) los genera la skill «Aula Virtual Grupo VIME» en Claude. Este botón arma la orden con los datos del curso, el capacitador, la lista y los folios para que solo la pegue en el chat junto con el contenido del curso y la firma.</p></div>';
+  }
+
+  function formCurso(cu, pre) {
+    const servs = DB.servicios.filter(s => s.tipo === 'CAPACITACIONES' && !s.archivado);
+    const val = Object.assign({ modalidad: 'Presencial', instructorId: (instructores()[0] || {}).id || '' }, pre || {}, cu || {});
+    const campos = [
+      { k: 'curso', t: 'Nombre del curso', req: true, ancho: true },
+      { k: 'clave', t: 'Clave para el folio', ayuda: 'Letras o números, p. ej. PCO o FBR. Si la deja vacía se forma con las iniciales del curso.' },
+      { k: 'modalidad', t: 'Modalidad', tipo: 'select', opciones: MODALIDADES },
+      { k: 'fechaInicio', t: 'Fecha de inicio', tipo: 'date', req: true },
+      { k: 'fechaFin', t: 'Fecha de término', tipo: 'date', ayuda: 'Déjela vacía si fue un solo día.' },
+      { k: 'fechasTexto', t: 'Fechas como deben leerse (opcional)', ancho: true, ayuda: 'Solo si no fueron días seguidos. Ej.: «los días 25 al 29 de mayo y del 01 al 05 de junio de 2026».' },
+      { k: 'horas', t: 'Duración total (horas)', tipo: 'number', req: true, min: 1, paso: 0.5 },
+      { k: 'sede', t: 'Sede (si fue presencial)' },
+      { k: 'instructorId', t: 'Capacitador', tipo: 'select', req: true, opciones: [{ v: '', t: instructores().length ? 'Elija…' : 'Primero agregue un capacitador' }].concat(instructores().map(x => ({ v: x.id, t: ((x.titulo || '') + ' ' + x.nombre).trim() }))) },
+      { k: 'servicioId', t: 'Cliente (servicio de capacitaciones)', tipo: 'select', opciones: [{ v: '', t: 'Grupo abierto / sin cliente' }].concat(servs.map(s => { const { i, c } = cadena(s); return { v: s.id, t: nombreCli(c) + ' · ' + (i.nombreComercial || '') + ' · ' + s.ejercicio }; })) },
+      { k: 'empresa', t: 'Razón social de la empresa (para la DC-3)', ancho: true }
+    ];
+    formulario(cu ? 'Editar curso' : 'Nuevo curso', campos, val, async v => {
+      if (v.clave) v.clave = String(v.clave).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
+      if (v.fechaFin && v.fechaFin < v.fechaInicio) return { error: 'La fecha de término es anterior a la de inicio.' };
+      if (cu && (cu.participantes || []).some(p => p.folio) && v.clave !== (cu.clave || '') ) return { error: 'Ya hay folios emitidos con la clave anterior; no se puede cambiar la clave.' };
+      if (!v.empresa && v.servicioId) { const { c } = cadena(servicio(v.servicioId)); v.empresa = c.razonSocial || ''; }
+      const g = await guardar('cursos', Object.assign({ participantes: [] }, pre || {}, cu || {}, v), cu ? 'Curso actualizado' : 'Curso creado');
+      if (!cu) location.hash = '#/curso/' + g.id;
+    }, cu && !(cu.participantes || []).some(p => p.folio) ? { borrar: async () => { await borrar('cursos', cu.id, 'Curso eliminado'); location.hash = '#/capacitaciones'; }, borrarPregunta: '¿Eliminar este curso y su lista de participantes?' } : null);
+  }
+
+  /** Reduce la firma a un PNG ligero (máx. 900 px de ancho) conservando la transparencia. */
+  function prepararFirma(file) {
+    return new Promise((ok, mal) => {
+      const img = new Image(); const u = URL.createObjectURL(file);
+      img.onload = () => {
+        const k = Math.min(1, 900 / img.width); const cv = document.createElement('canvas');
+        cv.width = Math.round(img.width * k); cv.height = Math.round(img.height * k);
+        cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height); URL.revokeObjectURL(u);
+        cv.toBlob(b => b ? ok(b) : mal(new Error('No se pudo leer la imagen de la firma.')), 'image/png');
+      };
+      img.onerror = () => mal(new Error('La firma debe ser una imagen PNG o JPG.')); img.src = u;
+    });
+  }
+  function formInstructor(ins) {
+    const campos = [
+      { k: 'titulo', t: 'Título (opcional)', ayuda: 'Ej.: Lic., Ing., Mtra.' },
+      { k: 'nombre', t: 'Nombre completo', req: true },
+      { k: 'cargo', t: 'Leyenda bajo el nombre', def: 'Capacitador' },
+      { k: 'reg1', t: 'Registro 1', ancho: true, ayuda: 'Ej.: Registro STPS (agente capacitador): XXXX-000000-XXX-0000' },
+      { k: 'reg2', t: 'Registro 2', ancho: true, ayuda: 'Ej.: Registro de Protección Civil: CEPC/RT/0000/2026' }
+    ];
+    const val = Object.assign({}, ins || {}, { reg1: ((ins || {}).registros || [])[0] || '', reg2: ((ins || {}).registros || [])[1] || '' });
+    formulario(ins ? 'Editar capacitador' : 'Nuevo capacitador', campos, val, async v => {
+      const arch = $('#insFirma').files[0];
+      const nuevo = Object.assign({ id: (ins && ins.id) || Datos.nuevoId('ins') }, ins || {}, { titulo: v.titulo, nombre: v.nombre, cargo: v.cargo || 'Capacitador', registros: [v.reg1, v.reg2].filter(Boolean) });
+      if (arch) {
+        const png = await prepararFirma(arch);
+        if (Datos.MODO_PRUEBA) nuevo.firmaData = await new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(png); });
+        else { const f = new File([png], 'Firma_' + v.nombre.replace(/\s+/g, '_') + '.png', { type: 'image/png' }); const r = await Datos.subirArchivo(f, ['Capacitaciones', 'Firmas']); nuevo.firmaDriveId = r.driveId; nuevo.firmaUrl = r.url; delete nuevo.firmaData; }
+      } else if (!nuevo.firmaData && !nuevo.firmaDriveId) return { error: 'Suba la firma digital (imagen PNG, de preferencia con fondo transparente).' };
+      const lista = instructores().filter(x => x.id !== nuevo.id).concat([nuevo]);
+      await guardarInstructores(lista, 'Capacitador guardado');
+    }, Object.assign({ extraHtml: '<div class="campo ancho"><label>Firma digital' + (ins && (ins.firmaData || ins.firmaDriveId) ? ' (ya cargada; suba otra solo para reemplazarla)' : ' *') + '</label><input type="file" id="insFirma" accept="image/png,image/jpeg"><span class="ayuda">PNG con fondo transparente de preferencia. Se imprime arriba del nombre en cada constancia.</span>' +
+      (ins && ins.firmaData ? '<img src="' + esc(ins.firmaData) + '" alt="Firma" style="max-height:70px;margin-top:6px;background:#fff;border:1px solid var(--gris-claro);border-radius:6px;padding:4px">' : '') + '</div>' },
+      ins ? { borrar: async () => guardarInstructores(instructores().filter(x => x.id !== ins.id), 'Capacitador eliminado'), borrarPregunta: '¿Eliminar este capacitador? Las constancias ya emitidas no cambian.' } : {}));
+  }
+
+  const CAMPOS_PART = [
+    { k: 'nombres', t: 'Nombre(s)', req: true }, { k: 'apellidoPaterno', t: 'Apellido paterno', req: true }, { k: 'apellidoMaterno', t: 'Apellido materno' },
+    { k: 'curp', t: 'CURP', ayuda: 'Obligatoria solo para la DC-3.' }, { k: 'puesto', t: 'Puesto' }, { k: 'ocupacion', t: 'Ocupación específica (DC-3)' }
+  ];
+  function formParticipante(cuId, k) {
+    const cu = cursoPorId(cuId); const p = k == null ? null : cu.participantes[k];
+    formulario(p ? 'Editar participante' : 'Agregar participante', CAMPOS_PART, p || {}, async v => {
+      v.curp = String(v.curp || '').toUpperCase().replace(/\s+/g, '');
+      const e = Constancias.validarCURP(v.curp); if (e) return { error: e + '. Corríjala o déjela vacía.' };
+      const lista = (cu.participantes || []).slice();
+      if (v.curp && lista.some((x, j) => j !== k && x.curp === v.curp)) return { error: 'Esa CURP ya está en la lista.' };
+      if (p) lista[k] = Object.assign({}, p, v); else lista.push(v);
+      await guardar('cursos', Object.assign({}, cu, { participantes: lista }), 'Participante guardado');
+    });
+  }
+  function dialogoLista(cuId) {
+    const cu = cursoPorId(cuId);
+    abrirModal('Importar participantes · ' + cu.curso, '<form class="form" id="formLista">' +
+      '<div class="campo ancho"><label>Archivo de Excel o CSV</label><input type="file" id="lisArchivo" accept=".xlsx,.xls,.csv,.txt"><span class="ayuda">Sirve la plantilla de la skill (hoja «participantes») o cualquier tabla con encabezados como Nombre(s), Apellido paterno, Apellido materno, CURP, Puesto.</span></div>' +
+      '<div class="campo ancho"><label>…o pegue aquí las celdas copiadas de Excel</label><textarea id="lisTexto" rows="6" placeholder="Apellido paterno	Apellido materno	Nombre(s)	CURP	Puesto"></textarea><span class="ayuda">Si no copia los encabezados, el orden debe ser: Apellido paterno, Apellido materno, Nombre(s), CURP, Puesto, Empresa.</span></div>' +
+      '<div class="campo check ancho"><input type="checkbox" id="lisReemplazar"><label for="lisReemplazar">Reemplazar la lista actual (se conservan quienes ya tienen folio)</label></div>' +
+      '<div class="error-form" id="errLista" hidden></div><div class="form-pie"><button type="button" class="btn sec" data-acc="cerrarModal">Cancelar</button><button class="btn" type="submit">Importar</button></div></form>');
+    $('#formLista').addEventListener('submit', async e => {
+      e.preventDefault(); const err = $('#errLista'); const btn = e.submitter; btn.disabled = true; btn.textContent = 'Leyendo…';
+      try {
+        const f = $('#lisArchivo').files[0]; const t = $('#lisTexto').value;
+        let nuevos = f ? await Constancias.leerArchivo(f) : Constancias.deTexto(t);
+        if (!nuevos.length) throw new Error('No encontré participantes. Revise que la tabla tenga nombres y apellidos.');
+        const base = $('#lisReemplazar').checked ? (cu.participantes || []).filter(p => p.folio) : (cu.participantes || []).slice();
+        const curps = new Set(base.map(p => p.curp).filter(Boolean));
+        const repetidos = nuevos.filter(p => p.curp && curps.has(p.curp)).length;
+        nuevos = nuevos.filter(p => !(p.curp && curps.has(p.curp)));
+        const lista = base.concat(nuevos);
+        const malos = nuevos.filter(p => Constancias.validarCURP(p.curp)).length;
+        await guardar('cursos', Object.assign({}, cu, { participantes: lista }));
+        cerrarModal(); toast(nuevos.length + ' participante' + (nuevos.length === 1 ? '' : 's') + ' importado' + (nuevos.length === 1 ? '' : 's') + (repetidos ? ' · ' + repetidos + ' repetido(s) omitido(s)' : '') + (malos ? ' · ' + malos + ' con CURP por revisar' : ''));
+      } catch (ex) { err.textContent = ex.message; err.hidden = false; btn.disabled = false; btn.textContent = 'Importar'; }
+    });
+  }
+
+  async function emitirCurso(cuId) {
+    const cu = cursoPorId(cuId); const ins = instructorDe(cu.instructorId);
+    if (!ins) { toast('Asigne un capacitador al curso (botón Editar).', true); return; }
+    const pend = (cu.participantes || []).filter(p => !p.folio && !p.excluir);
+    const sinNombre = pend.filter(p => !p.nombres || !p.apellidoPaterno);
+    if (sinNombre.length) { toast('Hay ' + sinNombre.length + ' participante(s) sin nombre o apellido paterno.', true); return; }
+    if (!confirm('Se asignarán ' + pend.length + ' folio(s) y quedarán registrados para validación pública.\n\nRevise que los nombres estén bien escritos: el folio queda ligado a ese nombre.\n\n¿Continuar?')) return;
+    try {
+      sinc('Asignando folios…');
+      const r = await Datos.emitir(cu, ((ins.titulo || '') + ' ' + ins.nombre).trim());
+      refrescarDB(); sinc(''); toast(r.nuevos.length + ' folio(s) asignados: ' + (r.nuevos[0] || {}).folio + (r.nuevos.length > 1 ? ' a ' + r.nuevos[r.nuevos.length - 1].folio : ''));
+    } catch (e) { sinc(''); toast(e.message, true); }
+  }
+
+  async function bytesFirma(ins) {
+    const b = await Datos.obtenerArchivo({ url: ins.firmaData || '', driveId: ins.firmaDriveId || '' });
+    if (!b) throw new Error('No pude obtener la firma de ' + ins.nombre + '. Vuelva a subirla en Capacitaciones › Capacitadores.');
+    return { bytes: new Uint8Array(await b.arrayBuffer()), tipo: b.type || 'image/png' };
+  }
+  let ultimoLote = null;
+  async function generarConstancias(cuId) {
+    const cu = cursoPorId(cuId); const ins = instructorDe(cu.instructorId);
+    if (!ins) { toast('Asigne un capacitador al curso.', true); return; }
+    const ps = (cu.participantes || []).filter(p => p.folio && !p.excluir && (registroDe(p.folio) || {}).estado !== 'cancelada');
+    if (!ps.length) { toast('No hay constancias con folio vigente.', true); return; }
+    abrirModal('Constancias · ' + cu.curso, '<div class="vacio" id="genEstado">Armando ' + ps.length + ' constancia(s)… (la primera vez tarda unos segundos en cargar el diseño)</div>');
+    try {
+      const firma = await bytesFirma(ins);
+      const res = await Constancias.generar({ curso: Object.assign({}, cu, { fechasTexto: fechasCurso(cu) }), participantes: ps, instructor: Object.assign({}, ins, { firma }), urlVerificacion: CONFIG.VERIFICACION_URL });
+      const clave = claveCurso(cu) + String(cu.fechaFin || cu.fechaInicio).slice(0, 4);
+      ultimoLote = { cuId, res, nombreLote: 'LOTE_PARTICIPACION_' + clave + '.pdf', nombreZip: 'Constancias_' + clave + '.zip' };
+      await Datos.guardar('cursos', Object.assign({}, cu, { generadas: new Date().toISOString() })); DB = Datos.vista();
+      $('#modalCuerpo').innerHTML = '<p>Listas <b>' + ps.length + '</b> constancias (' + esc(ps[0].folio) + (ps.length > 1 ? ' a ' + esc(ps[ps.length - 1].folio) : '') + ').</p>' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0"><button class="btn" data-acc="bajarLote">⬇ Lote para imprimir (un PDF)</button><button class="btn sec" data-acc="bajarZip">⬇ ZIP: lote + una por participante</button>' +
+        (cu.servicioId ? '<button class="btn sec" data-acc="loteDrive">☁ Guardar lote en Documentos del servicio</button>' : '') + '</div>' +
+        '<p class="sub">Imprima en tamaño carta o A4 «ajustar a la página». Las constancias individuales sirven para enviarlas por correo o WhatsApp.</p>';
+    } catch (e) { $('#modalCuerpo').innerHTML = '<div class="error-form">' + esc(e.message) + '</div>'; }
+  }
+  async function loteDrive() {
+    const L = ultimoLote; if (!L) return; const cu = cursoPorId(L.cuId); const s = servicio(cu.servicioId); const { i, c } = cadena(s);
+    try {
+      sinc('Subiendo…');
+      const f = new File([L.res.lote], L.nombreLote, { type: 'application/pdf' });
+      const r = await Datos.subirArchivo(f, [nombreCli(c), i.nombreComercial, String(s.ejercicio), TIPOS[s.tipo].corto, 'Constancias']);
+      await Datos.guardar('documentos', { nombre: r.nombre, url: r.url, driveId: r.driveId || '', servicioId: s.id, eventoId: cu.eventoId || '', autor: Datos.usuario().nombre, fecha: hoyISO(), categoria: 'constancias' });
+      sinc(''); refrescarDB(); toast('Lote guardado en Documentos del servicio');
+    } catch (e) { sinc(''); toast(e.message, true); }
+  }
+
+  function ordenClaude(cuId) {
+    const cu = cursoPorId(cuId); const ins = instructorDe(cu.instructorId) || {};
+    const ps = cu.participantes || [];
+    const orden = {
+      grupo: { curso: cu.curso, clave: claveCurso(cu), cliente: quienCurso(cu), empresa_razon_social: cu.empresa || '', modalidad: (cu.modalidad || '').toLowerCase(),
+        fecha_inicio: cu.fechaInicio, fecha_fin: cu.fechaFin || cu.fechaInicio, fechas_texto: fechasCurso(cu), horas: String(cu.horas || ''), sede: cu.sede || '',
+        instructor: { titulo: ins.titulo || '', nombre: ins.nombre || '', cargo: ins.cargo || 'Capacitador', registros: ins.registros || [] } },
+      participantes: ps.map(p => ({ nombres: p.nombres, apellido_paterno: p.apellidoPaterno, apellido_materno: p.apellidoMaterno || '', curp: p.curp || '', puesto: p.puesto || '', ocupacion_especifica: p.ocupacion || '', empresa_razon_social: p.empresa || cu.empresa || '', folio_participacion: p.folio || '' })),
+      folios_asignados: ps.filter(p => p.folio).reduce((o, p) => { o[p.curp || nombreParticipante(p)] = p.folio; return o; }, {}),
+      origen: 'Cerebro Grupo VIME · ' + hoyISO()
+    };
+    const texto = sel => 'ORDEN VIME CURSO ' + claveCurso(cu) + '\nGenera con la skill Aula Virtual Grupo VIME: ' + sel.join(', ') + '.\n' +
+      'Las constancias de participación ya se emiten en Cerebro: NO generes folios nuevos; usa folios_asignados si te pido constancias.\n' +
+      'Te adjunto la plantilla DC-3, el contenido del curso y la firma del capacitador.\n\n```json\n' + JSON.stringify(orden, null, 1) + '\n```';
+    const ops = ['DC-3 de cada participante (PDF)', 'Manual del Participante (Word)', 'Guía Visual (Word)', 'Póster o infografía (Word)'];
+    abrirModal('Orden para Claude · ' + cu.curso, '<div class="form"><div class="campo ancho"><label>¿Qué necesita?</label>' + ops.map((o, k) => '<div class="campo check"><input type="checkbox" id="oc' + k + '"' + (k < 1 ? ' checked' : '') + '><label for="oc' + k + '">' + esc(o) + '</label></div>').join('') + '</div>' +
+      '<div class="campo ancho"><label>Orden (cópiela y péguela en Claude)</label><textarea id="ocTexto" rows="12" readonly style="font-family:monospace;font-size:12px"></textarea>' +
+      '<span class="ayuda">Para las DC-3 verifique que todas las CURP estén correctas y la razón social de la empresa. Adjunte en el chat la plantilla DC-3 de Word, el documento de contenido del curso (para el material) y la firma.</span></div>' +
+      '<div class="form-pie"><button type="button" class="btn sec" data-acc="cerrarModal">Cerrar</button><button type="button" class="btn" id="ocCopiar">Copiar orden</button></div></div>');
+    document.querySelector('.modal').classList.add('ancha');
+    const act = () => { $('#ocTexto').value = texto(ops.filter((o, k) => $('#oc' + k).checked)); };
+    ops.forEach((o, k) => $('#oc' + k).addEventListener('change', act)); act();
+    $('#ocCopiar').addEventListener('click', async () => { try { await navigator.clipboard.writeText($('#ocTexto').value); toast('Orden copiada'); } catch (e) { $('#ocTexto').select(); document.execCommand('copy'); toast('Orden copiada'); } });
+  }
+
+  async function estadoConstancia(folio, cancelar) {
+    const r = registroDe(folio); if (!r) return;
+    if (cancelar && !confirm('¿Cancelar la constancia ' + folio + '? La página de validación la mostrará como CANCELADA.')) return;
+    await guardar('constancias', Object.assign({}, r, cancelar ? { estado: 'cancelada', canceladaPor: Datos.usuario().nombre, fechaCancelacion: hoyISO() } : { estado: 'vigente', canceladaPor: '', fechaCancelacion: '' }), cancelar ? 'Constancia cancelada' : 'Constancia reactivada');
+  }
+  function constanciasEvento(evId) {
+    const ev = porId('eventos', evId); const ya = (DB.cursos || []).find(c => c.eventoId === evId);
+    if (ya) { location.hash = '#/curso/' + ya.id; return; }
+    const s = servicio(ev.servicioId) || {}; const { c } = s.id ? cadena(s) : { c: {} };
+    const mod = MODALIDADES.find(m => norm(m) === norm(ev.modalidad)) || (/l[ií]nea/i.test(ev.modalidad || '') ? 'En línea' : /h[ií]brid|mixt/i.test(ev.modalidad || '') ? 'Mixta' : 'Presencial');
+    formCurso(null, { curso: ev.curso || '', modalidad: mod, fechaInicio: ev.fecha, fechaFin: ev.fecha, horas: ev.cargaHoraria || '', servicioId: ev.servicioId || '', eventoId: ev.id, empresa: c.razonSocial || '' });
+  }
+
   /* Cambios en casillas, fechas y selectores */
   const CAMBIO = {
     etapa: async el => {
@@ -1135,6 +1450,10 @@
     if (e.target.id === 'buscarCliente') {
       estado.filtroClientes = e.target.value; const pos = e.target.selectionStart; pintar();
       const b = $('#buscarCliente'); b.focus(); b.setSelectionRange(pos, pos);
+    }
+    if (e.target.id === 'buscarConst') {
+      estado.filtroConst = e.target.value; const pos = e.target.selectionStart; pintar();
+      const b = $('#buscarConst'); b.focus(); b.setSelectionRange(pos, pos);
     }
     if (e.target.dataset && e.target.dataset.cambio === 'avanceStps') $('#numStps').textContent = e.target.value + '%';
   });

@@ -4,12 +4,12 @@
  * Modo real: servidor de Google Apps Script (cada usuario entra con su clave personal;
  * el servidor nunca entrega los pagos a quien no sea la Directora).
  */
-const COLECCIONES = ['clientes', 'inmuebles', 'servicios', 'eventos', 'pendientes', 'documentos', 'notas', 'responsables', 'ajustes'];
+const COLECCIONES = ['clientes', 'inmuebles', 'servicios', 'eventos', 'pendientes', 'documentos', 'notas', 'responsables', 'ajustes', 'cursos', 'constancias'];
 const COL_PRIVADA = 'cobros';
 
 const Datos = (() => {
   const MODO_PRUEBA = !CONFIG.SERVIDOR_URL;
-  const LLAVE_DEMO = 'cerebro_vime_demo_v4';
+  const LLAVE_DEMO = 'cerebro_vime_demo_v5';
   const LLAVE_SESION = 'cerebro_vime_sesion';
   let db = null;
   let sesion = null;
@@ -146,7 +146,24 @@ const Datos = (() => {
     guardarSesion(sesion);
   }
 
+  /** Asigna folios a los participantes sin folio y registra las constancias (servidor: con candado, sin repetir). */
+  async function emitir(curso, instructorNombre) {
+    let r;
+    if (MODO_PRUEBA) {
+      const reg = (db.ajustes || []).find(x => x.id === 'folios') || { id: 'folios', contadores: {} };
+      const ahora = new Date().toISOString();
+      r = asignarFolios(JSON.parse(JSON.stringify(curso)), reg.contadores || (reg.contadores = {}), (db.constancias || []).map(x => x.folio), instructorNombre, usuario() ? usuario().nombre : '', ahora);
+      r.curso.actualizado = ahora; r.folios = reg;
+    } else {
+      r = await llamar('emitir', { curso, instructor: instructorNombre });
+    }
+    const poner = (col, o) => { const l = db[col] || (db[col] = []); const i = l.findIndex(x => x.id === o.id); if (i >= 0) l[i] = o; else l.push(o); };
+    poner('cursos', r.curso); poner('ajustes', r.folios); r.nuevos.forEach(x => poner('constancias', x));
+    if (MODO_PRUEBA) guardarDemo();
+    return r;
+  }
+
   function reiniciarPrueba() { localStorage.removeItem(LLAVE_DEMO); }
 
-  return { MODO_PRUEBA, vista, leerSesion, cerrarSesion, usuario, esDirectora, cargar, guardar, borrar, subirArchivo, obtenerArchivo, entrar, reiniciarPrueba, nuevoId };
+  return { MODO_PRUEBA, vista, leerSesion, cerrarSesion, usuario, esDirectora, cargar, guardar, borrar, subirArchivo, obtenerArchivo, emitir, entrar, reiniciarPrueba, nuevoId };
 })();

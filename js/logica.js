@@ -385,4 +385,61 @@ function avisosWhatsApp(db, hoy) {
     .sort((a, b) => (a.fecha + a.hora).localeCompare(b.fecha + b.hora));
 }
 
-if (typeof module !== 'undefined') module.exports = { festivos, sumarHabiles, esHabil, validarEvento, avanceServicio, calcularAvisos, avisosWhatsApp, fechaAviso, resumenCobro, telWhatsApp, etapasServicio };
+/* ======================= Constancias de participación ======================= */
+/** Clave corta del curso para el folio (letras y números, máx. 6). Ej.: «PCO». */
+function claveCurso(c) {
+  const t = String((c && (c.clave || c.curso)) || 'CUR').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
+  if (c && c.clave) return t.replace(/[^A-Z0-9]/g, '').slice(0, 6) || 'CUR';
+  const pal = t.replace(/[^A-Z0-9 ]/g, ' ').split(/\s+/).filter(w => w && ['DE', 'DEL', 'LA', 'LAS', 'LOS', 'EL', 'Y', 'EN', 'PARA', 'A'].indexOf(w) < 0);
+  return (pal.map(w => w[0]).join('').slice(0, 6) || 'CUR');
+}
+function folioConstancia(clave, anio, n) { return 'AV.' + clave + anio + '-' + (n < 10 ? '00' : n < 100 ? '0' : '') + n; }
+function textoFechasCurso(fi, ff) {
+  if (!fi) return '';
+  ff = ff || fi; const a = deISO(fi), b = deISO(ff);
+  const d = x => pad2(x.getDate()), m = x => MESES[x.getMonth()];
+  if (fi === ff) return 'el día ' + d(a) + ' de ' + m(a) + ' de ' + a.getFullYear();
+  if (a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth()) return 'los días ' + d(a) + ' al ' + d(b) + ' de ' + m(a) + ' de ' + a.getFullYear();
+  if (a.getFullYear() === b.getFullYear()) return 'del ' + d(a) + ' de ' + m(a) + ' al ' + d(b) + ' de ' + m(b) + ' de ' + a.getFullYear();
+  return 'del ' + d(a) + ' de ' + m(a) + ' de ' + a.getFullYear() + ' al ' + d(b) + ' de ' + m(b) + ' de ' + b.getFullYear();
+}
+function nombreParticipante(p) { return [p.nombres, p.apellidoPaterno, p.apellidoMaterno].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim(); }
+/** Registro público de una constancia (lo que muestra la página de validación: nunca la CURP). */
+function registroConstancia(curso, p, instructorNombre, quien, ahora) {
+  return {
+    id: p.folio, folio: p.folio, tipo: 'PAR', nombre: nombreParticipante(p), curso: curso.curso, clave: claveCurso(curso),
+    modalidad: curso.modalidad || '', fechaInicio: curso.fechaInicio || '', fechaFin: curso.fechaFin || curso.fechaInicio || '',
+    fechasTexto: curso.fechasTexto || textoFechasCurso(curso.fechaInicio, curso.fechaFin), horas: curso.horas || '', sede: curso.sede || '',
+    instructor: instructorNombre || '', cursoId: curso.id, emitida: ahora, emitidaPor: quien || '', estado: 'vigente', actualizado: ahora
+  };
+}
+/**
+ * Asigna folios consecutivos (AV.{CLAVE}{AÑO}-{NNN}, un contador por curso y año) a los participantes sin folio.
+ * contadores: { 'PAR_PCO_2026': 3 } · usados: lista de folios ya registrados (para nunca repetir).
+ * Devuelve { curso, nuevos: [registros], contadores }. La usan la app (modo prueba) y el servidor.
+ */
+function asignarFolios(curso, contadores, usados, instructorNombre, quien, ahora) {
+  const clave = claveCurso(curso), anio = String(curso.fechaFin || curso.fechaInicio || hoyISO()).slice(0, 4);
+  const llave = 'PAR_' + clave + '_' + anio; let n = +(contadores[llave] || 0);
+  const ya = {}; (usados || []).forEach(f => { ya[f] = 1; });
+  const nuevos = [];
+  curso.participantes = (curso.participantes || []).map(p => {
+    if (p.folio || p.excluir) return p;
+    let f; do { n++; f = folioConstancia(clave, anio, n); } while (ya[f]);
+    ya[f] = 1; const q = Object.assign({}, p, { folio: f });
+    nuevos.push(registroConstancia(curso, q, instructorNombre, quien, ahora));
+    return q;
+  });
+  contadores[llave] = n;
+  return { curso, nuevos, contadores };
+}
+/** Datos que la página pública de validación puede mostrar. */
+function constanciaPublica(r) {
+  return {
+    folio: r.folio, nombre: r.nombre, curso: r.curso, modalidad: r.modalidad, fechas: r.fechasTexto || textoFechasCurso(r.fechaInicio, r.fechaFin),
+    horas: r.horas, instructor: r.instructor, emitida: String(r.emitida || '').slice(0, 10), estado: r.estado || 'vigente',
+    emisor: 'Aula Virtual Grupo VIME · Grupo VIME Asesoría Corporativa Integral'
+  };
+}
+
+if (typeof module !== 'undefined') module.exports = { asignarFolios, constanciaPublica, claveCurso, textoFechasCurso, festivos, sumarHabiles, esHabil, validarEvento, avanceServicio, calcularAvisos, avisosWhatsApp, fechaAviso, resumenCobro, telWhatsApp, etapasServicio };
