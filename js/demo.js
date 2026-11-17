@@ -82,6 +82,8 @@ function crearDatosDemo() {
       { nombres: 'Juan', apellidoPaterno: 'Pérez', apellidoMaterno: 'García', curp: 'PEGJ900215HMSRRN05', puesto: 'Brigadista' },
       { nombres: 'María', apellidoPaterno: 'López', apellidoMaterno: 'Hernández', curp: 'LOHM880530MMSPRR04', puesto: 'Coordinadora' },
       { nombres: 'Andrés', apellidoPaterno: 'Ramírez', apellidoMaterno: 'Santos', curp: 'RASA950812HMSMTN02', puesto: 'Brigadista' }] })];
+  cursos.push(R({ id: 'cur_demo2', curso: 'Uso y Manejo de Extintores', clave: 'UME', modalidad: 'Presencial', fechaInicio: d(-3), fechaFin: d(-3), horas: 4, sede: 'Cuernavaca, Morelos', instructorId: 'ins_demo', servicioId: 'ser_3',
+    empresa: 'Comercializadora del Sur de Morelos, S.A. de C.V.', tipoConstancia: 'empresa', leyendaEmpresa: 'El personal brigadista de', aplicaDC3: 'no', participantes: [] }));
   const constancias = [];
   const responsables = [
     R({ id: 'res_1', nombre: 'Proveedor externo: Cruz Ficticia' }),

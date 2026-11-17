@@ -403,11 +403,13 @@ function textoFechasCurso(fi, ff) {
   if (a.getFullYear() === b.getFullYear()) return 'del ' + d(a) + ' de ' + m(a) + ' al ' + d(b) + ' de ' + m(b) + ' de ' + a.getFullYear();
   return 'del ' + d(a) + ' de ' + m(a) + ' de ' + a.getFullYear() + ' al ' + d(b) + ' de ' + m(b) + ' de ' + b.getFullYear();
 }
-function nombreParticipante(p) { return [p.nombres, p.apellidoPaterno, p.apellidoMaterno].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim(); }
+/** Texto de la constancia para toda la empresa: «El personal brigadista de <Razón social>». */
+function textoEmpresa(curso) { return ((curso.leyendaEmpresa || 'El personal brigadista de') + ' ' + (curso.empresa || '')).replace(/\s+/g, ' ').trim(); }
+function nombreParticipante(p) { if (p.nombreFijo) return p.nombreFijo; return [p.nombres, p.apellidoPaterno, p.apellidoMaterno].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim(); }
 /** Registro público de una constancia (lo que muestra la página de validación: nunca la CURP). */
 function registroConstancia(curso, p, instructorNombre, quien, ahora) {
   return {
-    id: p.folio, folio: p.folio, tipo: 'PAR', nombre: nombreParticipante(p), curso: curso.curso, clave: claveCurso(curso),
+    id: p.folio, folio: p.folio, tipo: p.nombreFijo ? 'PAR-EMPRESA' : 'PAR', nombre: nombreParticipante(p), curso: curso.curso, clave: claveCurso(curso),
     modalidad: curso.modalidad || '', fechaInicio: curso.fechaInicio || '', fechaFin: curso.fechaFin || curso.fechaInicio || '',
     fechasTexto: curso.fechasTexto || textoFechasCurso(curso.fechaInicio, curso.fechaFin), horas: curso.horas || '', sede: curso.sede || '',
     instructor: instructorNombre || '', cursoId: curso.id, emitida: ahora, emitidaPor: quien || '', estado: 'vigente', actualizado: ahora
@@ -423,6 +425,17 @@ function asignarFolios(curso, contadores, usados, instructorNombre, quien, ahora
   const llave = 'PAR_' + clave + '_' + anio; let n = +(contadores[llave] || 0);
   const ya = {}; (usados || []).forEach(f => { ya[f] = 1; });
   const nuevos = [];
+  // Constancia única para toda la empresa: «El personal brigadista de <Razón social>»
+  if (curso.tipoConstancia === 'empresa') {
+    if (!curso.empresa) throw new Error('Para la constancia de toda la empresa falta la razón social del curso.');
+    if (!curso.folioEmpresa) {
+      let f; do { n++; f = folioConstancia(clave, anio, n); } while (ya[f]);
+      curso.folioEmpresa = f;
+      nuevos.push(Object.assign(registroConstancia(curso, { folio: f, nombreFijo: textoEmpresa(curso) }, instructorNombre, quien, ahora), { participantes: (curso.participantes || []).length }));
+    }
+    contadores[llave] = n;
+    return { curso, nuevos, contadores };
+  }
   curso.participantes = (curso.participantes || []).map(p => {
     if (p.folio || p.excluir) return p;
     let f; do { n++; f = folioConstancia(clave, anio, n); } while (ya[f]);
@@ -442,4 +455,4 @@ function constanciaPublica(r) {
   };
 }
 
-if (typeof module !== 'undefined') module.exports = { asignarFolios, constanciaPublica, claveCurso, textoFechasCurso, festivos, sumarHabiles, esHabil, validarEvento, avanceServicio, calcularAvisos, avisosWhatsApp, fechaAviso, resumenCobro, telWhatsApp, etapasServicio };
+if (typeof module !== 'undefined') module.exports = { textoEmpresa, asignarFolios, constanciaPublica, claveCurso, textoFechasCurso, festivos, sumarHabiles, esHabil, validarEvento, avanceServicio, calcularAvisos, avisosWhatsApp, fechaAviso, resumenCobro, telWhatsApp, etapasServicio };

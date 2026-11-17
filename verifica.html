@@ -59,7 +59,7 @@
       async function buscar(folio) {
         // Versión de prueba (abierta desde el disco): busca en los datos ficticios de este navegador
         if (!CONFIG.SERVIDOR_URL) {
-          let db = {}; try { db = JSON.parse(localStorage.getItem('cerebro_vime_demo_v5') || '{}'); } catch (e) { }
+          let db = {}; try { db = JSON.parse(localStorage.getItem('cerebro_vime_demo_v6') || '{}'); } catch (e) { }
           const r = (db.constancias || []).find(x => x.folio === folio);
           return r ? { encontrado: true, folio: r.folio, nombre: r.nombre, curso: r.curso, modalidad: r.modalidad, fechas: r.fechasTexto, horas: r.horas, instructor: r.instructor, emitida: String(r.emitida || '').slice(0, 10), estado: r.estado, prueba: true } : { encontrado: false, folio };
         }

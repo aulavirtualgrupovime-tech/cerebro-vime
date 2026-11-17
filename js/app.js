@@ -1132,11 +1132,17 @@
   }
   function fechasCurso(cu) { return cu.fechasTexto || textoFechasCurso(cu.fechaInicio, cu.fechaFin); }
   function registroDe(folio) { return (DB.constancias || []).find(x => x.folio === folio); }
-  function problemas(p, todos) {
+  const aplicaDC3 = cu => cu.aplicaDC3 !== 'no';
+  const esEmpresa = cu => cu.tipoConstancia === 'empresa';
+  const tieneFolios = cu => !!cu.folioEmpresa || (cu.participantes || []).some(p => p.folio);
+  function problemas(p, todos, dc3) {
     const e = [];
     if (!p.nombres) e.push('Falta nombre');
     if (!p.apellidoPaterno) e.push('Falta apellido paterno');
-    const v = Constancias.validarCURP(p.curp); if (v) e.push(v);
+    if (dc3) {
+      const v = Constancias.validarCURP(p.curp); if (v) e.push(v);
+      if (!p.curp) e.push('Falta CURP (DC-3)');
+    }
     if (p.curp && todos.filter(x => x.curp === p.curp).length > 1) e.push('CURP repetida');
     return e;
   }
@@ -1164,7 +1170,9 @@
       (cursos.length ? '<div class="lista">' + cursos.map(cu => {
         const ps = cu.participantes || []; const em = ps.filter(p => p.folio).length;
         return '<div class="fila clic" data-acc="ir" data-h="#/curso/' + cu.id + '"><div style="width:6px;align-self:stretch;border-radius:3px;background:var(--azul)"></div><div class="crece"><b>' + esc(cu.curso) + '</b>' +
-          (ps.length && em === ps.length ? ' <span class="etiqueta" style="background:var(--verde)">Constancias emitidas</span>' : em ? ' <span class="etiqueta" style="background:var(--ambar)">' + em + ' de ' + ps.length + ' emitidas</span>' : '') +
+          (esEmpresa(cu) ? (cu.folioEmpresa ? ' <span class="etiqueta" style="background:var(--verde)">Constancia de empresa emitida</span>' : ' <span class="etiqueta borde" style="color:var(--marino)">Constancia para toda la empresa</span>')
+            : ps.length && em === ps.length ? ' <span class="etiqueta" style="background:var(--verde)">Constancias emitidas</span>' : em ? ' <span class="etiqueta" style="background:var(--ambar)">' + em + ' de ' + ps.length + ' emitidas</span>' : '') +
+          (aplicaDC3(cu) ? '' : ' <span class="etiqueta borde" style="color:var(--gris)">Sin DC-3</span>') +
           '<div class="sub">' + esc(quienCurso(cu)) + ' · ' + esc(fechaCorta(cu.fechaInicio)) + (cu.fechaFin && cu.fechaFin !== cu.fechaInicio ? ' al ' + esc(fechaCorta(cu.fechaFin)) : '') + ' · ' + esc(cu.modalidad || '') + ' · ' + esc(cu.horas || '—') + ' h · ' + ps.length + ' participante' + (ps.length === 1 ? '' : 's') + '</div></div></div>';
       }).join('') + '</div>' : '<div class="vacio">Aún no hay cursos. Cree uno con «+ Nuevo curso».</div>') + '</div></div>' +
       '<div><div class="tarjeta"><div class="tarjeta-cab"><h3>Capacitadores</h3><button class="btn chico" data-acc="nuevoInstructor">+ Agregar</button></div>' +
@@ -1190,7 +1198,9 @@
     const ins = instructorDe(cu.instructorId);
     const ps = cu.participantes || [];
     const pend = ps.filter(p => !p.folio && !p.excluir);
-    const conErr = ps.filter(p => problemas(p, ps).length);
+    const dc3 = aplicaDC3(cu), emp = esEmpresa(cu);
+    const conErr = ps.filter(p => problemas(p, ps, dc3).length);
+    const regEmp = cu.folioEmpresa && registroDe(cu.folioEmpresa);
     const emitidas = ps.filter(p => p.folio);
     const anio = String(cu.fechaFin || cu.fechaInicio || '').slice(0, 4);
     const dato = (t, v) => '<div class="dato"><small>' + t + '</small><div>' + v + '</div></div>';
@@ -1199,32 +1209,37 @@
       '<button class="btn sec chico" data-acc="editarCurso" data-id="' + cu.id + '">Editar</button></div>' +
       '<div class="datos">' + dato('Modalidad', esc(cu.modalidad || '—')) + dato('Fechas', esc(fechasCurso(cu) || '—')) + dato('Duración', esc(cu.horas || '—') + ' horas') +
       dato('Sede', esc(cu.sede || '—')) + dato('Capacitador', ins ? esc(((ins.titulo || '') + ' ' + ins.nombre).trim()) + ((ins.firmaData || ins.firmaDriveId) ? '' : ' <span class="etiqueta" style="background:var(--rojo)">sin firma</span>') : '<span style="color:var(--rojo)">Sin asignar</span>') +
-      dato('Folios', 'AV.' + esc(claveCurso(cu)) + esc(anio) + '-001, -002…') + '</div></div>' +
+      dato('Constancia de participación', emp ? 'Una para toda la empresa: «' + esc(textoEmpresa(cu)) + '»' : 'Una por participante') +
+      dato('DC-3', dc3 ? '<b style="color:var(--verde)">APLICA</b>' : '<b style="color:var(--gris)">NO APLICA</b>') +
+      dato('Folios', 'AV.' + esc(claveCurso(cu)) + esc(anio) + (emp ? '-NNN (uno para la empresa)' : '-001, -002…')) + '</div></div>' +
       '<div class="tarjeta"><div class="tarjeta-cab"><h3>Participantes (' + ps.length + ')</h3><div style="display:flex;gap:8px;flex-wrap:wrap">' +
       '<button class="btn sec" data-acc="importarLista" data-id="' + cu.id + '">📥 Importar Excel / pegar lista</button><button class="btn acento" data-acc="nuevoParticipante" data-id="' + cu.id + '">+ Agregar</button></div></div>' +
-      (conErr.length ? '<div class="aviso-it ambar"><div><b>' + conErr.length + ' participante' + (conErr.length === 1 ? '' : 's') + ' con datos por revisar</b><span>La constancia de participación solo exige el nombre; la CURP correcta es obligatoria para la DC-3.</span></div></div>' : '') +
+      (emp ? '<p class="sub">Con constancia para toda la empresa la lista es opcional' + (dc3 ? ', pero se necesita para las DC-3.' : '; sirve como registro de asistencia.') + '</p>' : '') +
+      (conErr.length ? '<div class="aviso-it ambar"><div><b>' + conErr.length + ' participante' + (conErr.length === 1 ? '' : 's') + ' con datos por revisar</b><span>' + (dc3 ? 'La CURP correcta es obligatoria para la DC-3.' : 'Revise nombres y apellidos.') + '</span></div></div>' : '') +
       (ps.length ? '<div style="overflow-x:auto"><table class="tabla"><thead><tr><th>#</th><th>Nombre</th><th>CURP</th><th>Puesto</th><th>Folio</th><th></th></tr></thead><tbody>' +
         ps.map((p, k) => {
-          const pr = problemas(p, ps); const r = p.folio && registroDe(p.folio);
+          const pr = problemas(p, ps, dc3); const r = p.folio && registroDe(p.folio);
           return '<tr><td>' + (k + 1) + '</td><td><b>' + esc(nombreParticipante(p)) + '</b>' + (pr.length ? '<div class="sub" style="color:var(--rojo)">' + esc(pr.join(' · ')) + '</div>' : '') + '</td><td>' + esc(p.curp || '—') + '</td><td>' + esc(p.puesto || '') + '</td><td>' +
-            (p.folio ? '<b>' + esc(p.folio) + '</b>' + (r && r.estado === 'cancelada' ? ' <span class="etiqueta" style="background:var(--rojo)">Cancelada</span>' : '') : '<span class="sub">Por emitir</span>') + '</td><td style="white-space:nowrap">' +
+            (p.folio ? '<b>' + esc(p.folio) + '</b>' + (r && r.estado === 'cancelada' ? ' <span class="etiqueta" style="background:var(--rojo)">Cancelada</span>' : '') : '<span class="sub">' + (emp ? 'En la de empresa' : 'Por emitir') + '</span>') + '</td><td style="white-space:nowrap">' +
             '<button class="btn-icono" data-acc="editarParticipante" data-id="' + cu.id + '" data-k="' + k + '" title="Editar">✎</button>' +
             (p.folio ? '' : '<button class="btn-icono" data-acc="quitarParticipante" data-id="' + cu.id + '" data-k="' + k + '" title="Quitar">✕</button>') + '</td></tr>';
         }).join('') + '</tbody></table></div>' : '<div class="vacio">Importe la lista desde Excel (plantilla de la skill o cualquier tabla con Nombre, Apellidos y CURP) o péguela desde la hoja de cálculo.</div>') + '</div>' +
       '<div class="tarjeta"><h3>Constancias de participación</h3>' +
       '<div class="etapa' + (ins && (ins.firmaData || ins.firmaDriveId) ? ' hecha' : '') + '"><span class="txt">1. Capacitador con firma digital asignado</span></div>' +
-      '<div class="etapa' + (ps.length && !pend.length ? ' hecha' : '') + '"><span class="txt">2. Folios asignados y registrados para validación (' + emitidas.length + ' de ' + ps.length + ')</span>' +
-      (pend.length ? '<button class="btn chico" data-acc="emitirCurso" data-id="' + cu.id + '">Asignar ' + pend.length + ' folio' + (pend.length === 1 ? '' : 's') + '</button>' : '') + '</div>' +
-      '<div class="etapa' + (cu.generadas ? ' hecha' : '') + '"><span class="txt">3. Constancias en PDF (lote para imprimir + una por participante)' + (cu.generadas ? ' <span class="sub">· última vez ' + esc(fechaCorta(String(cu.generadas).slice(0, 10))) + '</span>' : '') + '</span>' +
-      (emitidas.length ? '<button class="btn acento chico" data-acc="generarConstancias" data-id="' + cu.id + '">⬇ Generar PDF</button>' : '') + '</div>' +
+      (emp ? '<div class="etapa' + (cu.folioEmpresa ? ' hecha' : '') + '"><span class="txt">2. Folio de la constancia para toda la empresa' + (cu.folioEmpresa ? ': <b>' + esc(cu.folioEmpresa) + '</b>' + (regEmp && regEmp.estado === 'cancelada' ? ' <span class="etiqueta" style="background:var(--rojo)">Cancelada</span>' : '') : '') + '<div class="sub">«' + esc(textoEmpresa(cu)) + '»</div></span>' +
+          (cu.folioEmpresa ? '' : '<button class="btn chico" data-acc="emitirCurso" data-id="' + cu.id + '">Asignar folio</button>') + '</div>'
+        : '<div class="etapa' + (ps.length && !pend.length ? ' hecha' : '') + '"><span class="txt">2. Folios asignados y registrados para validación (' + emitidas.length + ' de ' + ps.length + ')</span>' +
+          (pend.length ? '<button class="btn chico" data-acc="emitirCurso" data-id="' + cu.id + '">Asignar ' + pend.length + ' folio' + (pend.length === 1 ? '' : 's') + '</button>' : '') + '</div>') +
+      '<div class="etapa' + (cu.generadas ? ' hecha' : '') + '"><span class="txt">3. ' + (emp ? 'Constancia de la empresa en PDF' : 'Constancias en PDF (lote para imprimir + una por participante)') + (cu.generadas ? ' <span class="sub">· última vez ' + esc(fechaCorta(String(cu.generadas).slice(0, 10))) + '</span>' : '') + '</span>' +
+      ((emp ? cu.folioEmpresa : emitidas.length) ? '<button class="btn acento chico" data-acc="generarConstancias" data-id="' + cu.id + '">⬇ Generar PDF</button>' : '') + '</div>' +
       '<p class="sub" style="margin-top:10px">El PDF se arma en este equipo con el diseño oficial (logos de Aula Virtual y Grupo VIME, un capacitador, folio y QR). Los folios nunca se repiten: los asigna el servidor.</p></div>' +
-      '<div class="tarjeta"><div class="tarjeta-cab"><h3>DC-3 y material didáctico</h3><button class="btn sec" data-acc="ordenClaude" data-id="' + cu.id + '">🤖 Orden para Claude</button></div>' +
-      '<p class="sub">Las DC-3 (formato STPS en Word) y el material didáctico (Manual del Participante, Guía Visual y póster) los genera la skill «Aula Virtual Grupo VIME» en Claude. Este botón arma la orden con los datos del curso, el capacitador, la lista y los folios para que solo la pegue en el chat junto con el contenido del curso y la firma.</p></div>';
+      '<div class="tarjeta"><div class="tarjeta-cab"><h3>' + (dc3 ? 'DC-3 y material didáctico' : 'Material didáctico <span class="sub">(este curso no lleva DC-3)</span>') + '</h3><button class="btn sec" data-acc="ordenClaude" data-id="' + cu.id + '">🤖 Orden para Claude</button></div>' +
+      '<p class="sub">' + (dc3 ? 'Las DC-3 (formato STPS en Word) y el' : 'El') + ' material didáctico (Manual del Participante, Guía Visual y póster) ' + (dc3 ? 'los genera' : 'lo genera') + ' la skill «Aula Virtual Grupo VIME» en Claude. Este botón arma la orden con los datos del curso, el capacitador, la lista y los folios para que solo la pegue en el chat junto con el contenido del curso y la firma.</p></div>';
   }
 
   function formCurso(cu, pre) {
     const servs = DB.servicios.filter(s => s.tipo === 'CAPACITACIONES' && !s.archivado);
-    const val = Object.assign({ modalidad: 'Presencial', instructorId: (instructores()[0] || {}).id || '' }, pre || {}, cu || {});
+    const val = Object.assign({ modalidad: 'Presencial', instructorId: (instructores()[0] || {}).id || '', tipoConstancia: 'individual', aplicaDC3: 'si', leyendaEmpresa: 'El personal brigadista de' }, pre || {}, cu || {});
     const campos = [
       { k: 'curso', t: 'Nombre del curso', req: true, ancho: true },
       { k: 'clave', t: 'Clave para el folio', ayuda: 'Letras o números, p. ej. PCO o FBR. Si la deja vacía se forma con las iniciales del curso.' },
@@ -1236,16 +1251,23 @@
       { k: 'sede', t: 'Sede (si fue presencial)' },
       { k: 'instructorId', t: 'Capacitador', tipo: 'select', req: true, opciones: [{ v: '', t: instructores().length ? 'Elija…' : 'Primero agregue un capacitador' }].concat(instructores().map(x => ({ v: x.id, t: ((x.titulo || '') + ' ' + x.nombre).trim() }))) },
       { k: 'servicioId', t: 'Cliente (servicio de capacitaciones)', tipo: 'select', opciones: [{ v: '', t: 'Grupo abierto / sin cliente' }].concat(servs.map(s => { const { i, c } = cadena(s); return { v: s.id, t: nombreCli(c) + ' · ' + (i.nombreComercial || '') + ' · ' + s.ejercicio }; })) },
-      { k: 'empresa', t: 'Razón social de la empresa (para la DC-3)', ancho: true }
+      { k: 'empresa', t: 'Razón social de la empresa', ancho: true, ayuda: 'Se usa en la DC-3 y en la constancia para toda la empresa.' },
+      { k: 'aplicaDC3', t: 'DC-3', tipo: 'select', opciones: [{ v: 'si', t: 'APLICA' }, { v: 'no', t: 'NO APLICA (solo constancia de participación)' }] },
+      { k: 'tipoConstancia', t: 'Constancia de participación', tipo: 'select', opciones: [{ v: 'individual', t: 'Una por participante' }, { v: 'empresa', t: 'Una para toda la empresa' }] },
+      { k: 'leyendaEmpresa', t: 'Leyenda de la constancia para toda la empresa', ancho: true, ayuda: 'Va antes de la razón social. Ej.: «El personal brigadista de» → «El personal brigadista de Hotelera Tlahuica, S.A. de C.V.»' }
     ];
     formulario(cu ? 'Editar curso' : 'Nuevo curso', campos, val, async v => {
       if (v.clave) v.clave = String(v.clave).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
       if (v.fechaFin && v.fechaFin < v.fechaInicio) return { error: 'La fecha de término es anterior a la de inicio.' };
-      if (cu && (cu.participantes || []).some(p => p.folio) && v.clave !== (cu.clave || '') ) return { error: 'Ya hay folios emitidos con la clave anterior; no se puede cambiar la clave.' };
+      if (cu && tieneFolios(cu) && v.clave !== (cu.clave || '') ) return { error: 'Ya hay folios emitidos con la clave anterior; no se puede cambiar la clave.' };
+      if (cu && tieneFolios(cu) && v.tipoConstancia !== (cu.tipoConstancia || 'individual')) return { error: 'Ya hay folios emitidos; no se puede cambiar el tipo de constancia de este curso.' };
       if (!v.empresa && v.servicioId) { const { c } = cadena(servicio(v.servicioId)); v.empresa = c.razonSocial || ''; }
+      if (v.tipoConstancia === 'empresa' && !v.empresa) return { error: 'Para la constancia de toda la empresa escriba la razón social.' };
+      if (cu && cu.folioEmpresa && (v.empresa !== cu.empresa || v.leyendaEmpresa !== cu.leyendaEmpresa)) return { error: 'La constancia de la empresa ya tiene folio con esa razón social y leyenda; no se pueden cambiar.' };
+      v.leyendaEmpresa = v.leyendaEmpresa || 'El personal brigadista de';
       const g = await guardar('cursos', Object.assign({ participantes: [] }, pre || {}, cu || {}, v), cu ? 'Curso actualizado' : 'Curso creado');
       if (!cu) location.hash = '#/curso/' + g.id;
-    }, cu && !(cu.participantes || []).some(p => p.folio) ? { borrar: async () => { await borrar('cursos', cu.id, 'Curso eliminado'); location.hash = '#/capacitaciones'; }, borrarPregunta: '¿Eliminar este curso y su lista de participantes?' } : null);
+    }, cu && !tieneFolios(cu) ? { borrar: async () => { await borrar('cursos', cu.id, 'Curso eliminado'); location.hash = '#/capacitaciones'; }, borrarPregunta: '¿Eliminar este curso y su lista de participantes?' } : null);
   }
 
   /** Reduce la firma a un PNG ligero (máx. 900 px de ancho) conservando la transparencia. */
@@ -1328,6 +1350,17 @@
   async function emitirCurso(cuId) {
     const cu = cursoPorId(cuId); const ins = instructorDe(cu.instructorId);
     if (!ins) { toast('Asigne un capacitador al curso (botón Editar).', true); return; }
+    if (esEmpresa(cu)) {
+      if (cu.folioEmpresa) { toast('La constancia de la empresa ya tiene folio: ' + cu.folioEmpresa); return; }
+      if (!cu.empresa) { toast('Falta la razón social del curso (botón Editar).', true); return; }
+      if (!confirm('Se asignará 1 folio a la constancia para toda la empresa:\n\n«' + textoEmpresa(cu) + '»\n\nRevise que la razón social esté bien escrita: el folio queda ligado a ese texto.\n\n¿Continuar?')) return;
+      try {
+        sinc('Asignando folio…');
+        const r = await Datos.emitir(cu, ((ins.titulo || '') + ' ' + ins.nombre).trim());
+        refrescarDB(); sinc(''); toast('Folio asignado: ' + (r.curso.folioEmpresa || ''));
+      } catch (e) { sinc(''); toast(e.message, true); }
+      return;
+    }
     const pend = (cu.participantes || []).filter(p => !p.folio && !p.excluir);
     const sinNombre = pend.filter(p => !p.nombres || !p.apellidoPaterno);
     if (sinNombre.length) { toast('Hay ' + sinNombre.length + ' participante(s) sin nombre o apellido paterno.', true); return; }
@@ -1348,7 +1381,9 @@
   async function generarConstancias(cuId) {
     const cu = cursoPorId(cuId); const ins = instructorDe(cu.instructorId);
     if (!ins) { toast('Asigne un capacitador al curso.', true); return; }
-    const ps = (cu.participantes || []).filter(p => p.folio && !p.excluir && (registroDe(p.folio) || {}).estado !== 'cancelada');
+    const ps = esEmpresa(cu)
+      ? (cu.folioEmpresa && (registroDe(cu.folioEmpresa) || {}).estado !== 'cancelada' ? [{ folio: cu.folioEmpresa, leyenda: cu.leyendaEmpresa || 'El personal brigadista de', empresa: cu.empresa }] : [])
+      : (cu.participantes || []).filter(p => p.folio && !p.excluir && (registroDe(p.folio) || {}).estado !== 'cancelada');
     if (!ps.length) { toast('No hay constancias con folio vigente.', true); return; }
     abrirModal('Constancias · ' + cu.curso, '<div class="vacio" id="genEstado">Armando ' + ps.length + ' constancia(s)… (la primera vez tarda unos segundos en cargar el diseño)</div>');
     try {
@@ -1383,15 +1418,18 @@
         instructor: { titulo: ins.titulo || '', nombre: ins.nombre || '', cargo: ins.cargo || 'Capacitador', registros: ins.registros || [] } },
       participantes: ps.map(p => ({ nombres: p.nombres, apellido_paterno: p.apellidoPaterno, apellido_materno: p.apellidoMaterno || '', curp: p.curp || '', puesto: p.puesto || '', ocupacion_especifica: p.ocupacion || '', empresa_razon_social: p.empresa || cu.empresa || '', folio_participacion: p.folio || '' })),
       folios_asignados: ps.filter(p => p.folio).reduce((o, p) => { o[p.curp || nombreParticipante(p)] = p.folio; return o; }, {}),
+      aplica_dc3: aplicaDC3(cu),
+      tipo_constancia: esEmpresa(cu) ? 'empresa' : 'individual',
+      constancia_empresa: esEmpresa(cu) ? { texto: textoEmpresa(cu), folio: cu.folioEmpresa || '' } : null,
       origen: 'Cerebro Grupo VIME · ' + hoyISO()
     };
     const texto = sel => 'ORDEN VIME CURSO ' + claveCurso(cu) + '\nGenera con la skill Aula Virtual Grupo VIME: ' + sel.join(', ') + '.\n' +
       'Las constancias de participación ya se emiten en Cerebro: NO generes folios nuevos; usa folios_asignados si te pido constancias.\n' +
-      'Te adjunto la plantilla DC-3, el contenido del curso y la firma del capacitador.\n\n```json\n' + JSON.stringify(orden, null, 1) + '\n```';
-    const ops = ['DC-3 de cada participante (PDF)', 'Manual del Participante (Word)', 'Guía Visual (Word)', 'Póster o infografía (Word)'];
+      (aplicaDC3(cu) ? 'Te adjunto la plantilla DC-3, el contenido del curso y la firma del capacitador.' : 'Este curso NO lleva DC-3. Te adjunto el contenido del curso.') + '\n\n```json\n' + JSON.stringify(orden, null, 1) + '\n```';
+    const ops = (aplicaDC3(cu) ? ['DC-3 de cada participante (PDF)'] : []).concat(['Manual del Participante (Word)', 'Guía Visual (Word)', 'Póster o infografía (Word)']);
     abrirModal('Orden para Claude · ' + cu.curso, '<div class="form"><div class="campo ancho"><label>¿Qué necesita?</label>' + ops.map((o, k) => '<div class="campo check"><input type="checkbox" id="oc' + k + '"' + (k < 1 ? ' checked' : '') + '><label for="oc' + k + '">' + esc(o) + '</label></div>').join('') + '</div>' +
       '<div class="campo ancho"><label>Orden (cópiela y péguela en Claude)</label><textarea id="ocTexto" rows="12" readonly style="font-family:monospace;font-size:12px"></textarea>' +
-      '<span class="ayuda">Para las DC-3 verifique que todas las CURP estén correctas y la razón social de la empresa. Adjunte en el chat la plantilla DC-3 de Word, el documento de contenido del curso (para el material) y la firma.</span></div>' +
+      '<span class="ayuda">' + (aplicaDC3(cu) ? 'Para las DC-3 verifique que todas las CURP estén correctas y la razón social de la empresa. Adjunte en el chat la plantilla DC-3 de Word, el documento de contenido del curso (para el material) y la firma.' : 'Este curso no lleva DC-3. Adjunte en el chat el documento de contenido del curso.') + '</span></div>' +
       '<div class="form-pie"><button type="button" class="btn sec" data-acc="cerrarModal">Cerrar</button><button type="button" class="btn" id="ocCopiar">Copiar orden</button></div></div>');
     document.querySelector('.modal').classList.add('ancha');
     const act = () => { $('#ocTexto').value = texto(ops.filter((o, k) => $('#oc' + k).checked)); };

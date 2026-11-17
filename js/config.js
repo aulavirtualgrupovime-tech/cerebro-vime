@@ -7,7 +7,7 @@
 const SERVIDOR_REAL = 'https://script.google.com/macros/s/AKfycbxDXktuKz3WCMb8L8aEO0QgxGbfjGCOqdjDp0Kd3vsESxDAw7x_3N4kWIhKaMAZilsy/exec';
 const CONFIG = {
   SERVIDOR_URL: location.protocol === 'file:' ? '' : SERVIDOR_REAL,
-  VERSION: '1.1.0',
+  VERSION: '1.2.0',
   // Página pública donde se valida cada constancia (el QR impreso apunta aquí + el folio)
   VERIFICACION_URL: 'https://aulavirtualgrupovime-tech.github.io/cerebro-vime/verifica.html?f='
 };

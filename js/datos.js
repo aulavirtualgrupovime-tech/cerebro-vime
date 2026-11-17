@@ -9,7 +9,7 @@ const COL_PRIVADA = 'cobros';
 
 const Datos = (() => {
   const MODO_PRUEBA = !CONFIG.SERVIDOR_URL;
-  const LLAVE_DEMO = 'cerebro_vime_demo_v5';
+  const LLAVE_DEMO = 'cerebro_vime_demo_v6';
   const LLAVE_SESION = 'cerebro_vime_sesion';
   let db = null;
   let sesion = null;

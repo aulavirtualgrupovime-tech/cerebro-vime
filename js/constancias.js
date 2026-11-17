@@ -6,6 +6,7 @@
  * El fondo y las fuentes viven en js/constancia_recursos.js (se carga solo cuando se necesita).
  *
  * Constancias.generar({ curso, participantes, instructor, urlVerificacion }) → { lote, individuales[] }
+ *   Para toda la empresa: participantes = [{ folio, leyenda: 'El personal brigadista de', empresa: 'Razón social' }]
  * Constancias.leerArchivo(file) / Constancias.deTexto(texto) → participantes
  * Constancias.validarCURP(curp) → '' si está bien, o el problema
  */
@@ -44,6 +45,7 @@ const Constancias = (() => {
   const CFG = {
     centroX: 297.75, ancho: 430,
     nombre: { fuente: 'GreatVibes', tam: 46, min: 22, color: '#F3AF33', base: 389 },
+    empresa: { tam1: 30, base1: 356, tam2: 40, min2: 18, base2: 398 },
     curso: { fuente: 'GildaDisplay', tam: 22, min: 15, color: '#111111', base: 494.5, inter: 30, maxLineas: 2 },
     desc: { fuente: 'Questrial', tam: 13, min: 10.5, color: '#111111', inter: 19.5, sep: 24, limite: 640 },
     folio: { fuente: 'Questrial', tam: 10.5, color: '#FFFFFF', xDer: 519, base: 816.3 },
@@ -158,9 +160,19 @@ const Constancias = (() => {
     const page = doc.addPage([W, H]); page.drawPage(fondo, { x: 0, y: 0, width: W, height: H });
     const centrado = (txt, f, tam, yt, col, cx) => page.drawText(txt, { x: (cx || CFG.centroX) - f.widthOfTextAtSize(txt, tam) / 2, y: Y(yt), size: tam, font: f, color: color(PDFLib, col) });
     // nombre
-    let n = CFG.nombre, nombre = nombreCompleto(p), tam = n.tam;
-    while (F[n.fuente].widthOfTextAtSize(nombre, tam) > CFG.ancho + 20 && tam > n.min) tam -= 1;
-    centrado(nombre, F[n.fuente], tam, n.base, n.color);
+    let n = CFG.nombre, tam;
+    if (p.empresa) { // constancia para toda la empresa: leyenda + razón social en dos renglones
+      const e = CFG.empresa; tam = e.tam1;
+      while (F[n.fuente].widthOfTextAtSize(p.leyenda, tam) > CFG.ancho + 20 && tam > 18) tam -= 1;
+      centrado(p.leyenda, F[n.fuente], tam, e.base1, n.color);
+      tam = e.tam2;
+      while (F[n.fuente].widthOfTextAtSize(p.empresa, tam) > CFG.ancho + 30 && tam > e.min2) tam -= 1;
+      centrado(p.empresa, F[n.fuente], tam, e.base2, n.color);
+    } else {
+      const nombre = nombreCompleto(p); tam = n.tam;
+      while (F[n.fuente].widthOfTextAtSize(nombre, tam) > CFG.ancho + 20 && tam > n.min) tam -= 1;
+      centrado(nombre, F[n.fuente], tam, n.base, n.color);
+    }
     // curso
     const k = CFG.curso; tam = k.tam; let lineas;
     while (true) { lineas = partir(String(curso.curso || '').toUpperCase(), F[k.fuente], tam, CFG.ancho); if (lineas.length <= k.maxLineas || tam <= k.min) break; tam -= 0.5; }
@@ -204,9 +216,9 @@ const Constancias = (() => {
     for (const p of participantes) {
       pagina(lote, L, recLote, curso, p, instructor, urlDe(p.folio));
       const doc = await PDFLib.PDFDocument.create(); const rec = await preparar(doc, L, instructor.firma);
-      meta(doc, 'Constancia de participación ' + p.folio + ' · ' + nombreCompleto(p));
+      meta(doc, 'Constancia de participación ' + p.folio + ' · ' + (p.empresa ? p.leyenda + ' ' + p.empresa : nombreCompleto(p)));
       pagina(doc, L, rec, curso, p, instructor, urlDe(p.folio));
-      const archivo = (p.folio + '_' + [p.apellidoPaterno, String(p.nombres || '').split(' ')[0]].join('-')).normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\w.\-]+/g, '-').toUpperCase().replace(/^AV\./, 'AV.') + '.pdf';
+      const archivo = (p.folio + '_' + (p.empresa ? p.empresa.split(',')[0] : [p.apellidoPaterno, String(p.nombres || '').split(' ')[0]].join('-'))).normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\w.\-]+/g, '-').toUpperCase().replace(/^AV\./, 'AV.') + '.pdf';
       individuales.push({ folio: p.folio, archivo, bytes: await doc.save() });
     }
     return { lote: await lote.save(), individuales };
