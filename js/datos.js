@@ -4,12 +4,12 @@
  * Modo real: servidor de Google Apps Script (cada usuario entra con su clave personal;
  * el servidor nunca entrega los pagos a quien no sea la Directora).
  */
-const COLECCIONES = ['clientes', 'inmuebles', 'servicios', 'eventos', 'pendientes', 'documentos', 'notas', 'responsables', 'ajustes', 'cursos', 'constancias'];
+const COLECCIONES = ['clientes', 'inmuebles', 'servicios', 'eventos', 'pendientes', 'documentos', 'notas', 'responsables', 'ajustes', 'cursos', 'constancias', 'presupuestos'];
 const COL_PRIVADA = 'cobros';
 
 const Datos = (() => {
   const MODO_PRUEBA = !CONFIG.SERVIDOR_URL;
-  const LLAVE_DEMO = 'cerebro_vime_demo_v6';
+  const LLAVE_DEMO = 'cerebro_vime_demo_v8';
   const LLAVE_SESION = 'cerebro_vime_sesion';
   let db = null;
   let sesion = null;

@@ -218,3 +218,14 @@ table.tabla { width: 100%; border-collapse: collapse; font-size: 13px; }
 /* Vista previa de Word: si el equipo no tiene «Arial Nova Light», se muestra con una fuente parecida */
 #visorCuerpo [style*="Arial Nova"] { font-family: "Arial Nova Light", "Arial Nova", Arial, sans-serif !important; }
 #visorCuerpo .docx-wrapper { background: #E9ECF1; padding: 16px 8px; }
+
+/* Presupuestos: campos de cada concepto */
+.form.form-presu-a { grid-template-columns: 1fr 2fr; }
+.form.form-presu-b { grid-template-columns: repeat(4, 1fr); }
+@media (max-width: 760px) { .form.form-presu-a { grid-template-columns: 1fr; } .form.form-presu-b { grid-template-columns: 1fr 1fr; } }
+/* Celular: con 8 secciones, el menú inferior se desliza de lado en lugar de encimar los nombres */
+@media (max-width: 760px) {
+  .menu { overflow-x: auto; justify-content: flex-start; scrollbar-width: none; }
+  .menu::-webkit-scrollbar { display: none; }
+  .menu a { flex: 0 0 auto; min-width: 66px; }
+}

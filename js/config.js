@@ -6,8 +6,9 @@
  */
 const SERVIDOR_REAL = 'https://script.google.com/macros/s/AKfycbxDXktuKz3WCMb8L8aEO0QgxGbfjGCOqdjDp0Kd3vsESxDAw7x_3N4kWIhKaMAZilsy/exec';
 const CONFIG = {
-  SERVIDOR_URL: location.protocol === 'file:' ? '' : SERVIDOR_REAL,
-  VERSION: '1.2.2',
+  // En el disco (file://) o en el servidor local de pruebas (localhost) se usa la versión de prueba
+  SERVIDOR_URL: (location.protocol === 'file:' || location.hostname === 'localhost') ? '' : SERVIDOR_REAL,
+  VERSION: '1.3.0',
   // Página pública donde se valida cada constancia (el QR impreso apunta aquí + el folio)
   VERIFICACION_URL: 'https://aulavirtualgrupovime-tech.github.io/cerebro-vime/verifica.html?f='
 };

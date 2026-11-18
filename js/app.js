@@ -305,14 +305,14 @@
   const RUTAS = {
     panel: vistaPanel, clientes: vistaClientes, cliente: vistaCliente, inmueble: vistaInmueble, servicio: vistaServicio,
     calendario: vistaCalendario, avisos: vistaAvisos, pagos: vistaPagos, ajustes: vistaAjustes,
-    capacitaciones: vistaCapacitaciones, curso: vistaCurso
+    capacitaciones: vistaCapacitaciones, curso: vistaCurso, presupuestos: vistaPresupuestos, presupuesto: vistaPresupuesto
   };
   function ruta() { const p = (location.hash || '#/panel').slice(2).split('/'); return { nombre: RUTAS[p[0]] ? p[0] : 'panel', id: p[1] }; }
 
   function pintar() {
     if (!DB) return;
     const r = ruta();
-    document.querySelectorAll('#menu a').forEach(a => a.classList.toggle('activo', a.dataset.ruta === r.nombre || (r.nombre === 'cliente' || r.nombre === 'inmueble' || r.nombre === 'servicio') && a.dataset.ruta === 'clientes' || r.nombre === 'curso' && a.dataset.ruta === 'capacitaciones'));
+    document.querySelectorAll('#menu a').forEach(a => a.classList.toggle('activo', a.dataset.ruta === r.nombre || (r.nombre === 'cliente' || r.nombre === 'inmueble' || r.nombre === 'servicio') && a.dataset.ruta === 'clientes' || r.nombre === 'curso' && a.dataset.ruta === 'capacitaciones' || r.nombre === 'presupuesto' && a.dataset.ruta === 'presupuestos'));
     $('#menuPagos').hidden = !Datos.esDirectora();
     const avisos = calcularAvisos(DB, hoyISO(), Datos.esDirectora());
     const nUrg = avisos.filter(a => a.nivel !== 'azul').length + avisosWhatsApp(DB).length;
@@ -957,6 +957,134 @@
     });
   }
 
+
+  /* ======================= Presupuestos (apartado propio, todo el equipo) ======================= */
+  // Nota: el presupuesto NUNCA toma los precios de los servicios ya contratados (esos son privados de la Directora).
+  const ESTADOS_PRESU = ['Borrador', 'Enviado', 'Aceptado', 'No aceptado'];
+  const COLOR_PRESU = { 'Borrador': '#636363', 'Enviado': 'var(--azul)', 'Aceptado': 'var(--verde)', 'No aceptado': 'var(--rojo)' };
+  const copia = o => JSON.parse(JSON.stringify(o));
+  function siguienteFolio(anio) {
+    const n = (DB.presupuestos || []).filter(p => String(p.folio || '').indexOf('P' + anio + '-') === 0).map(p => parseInt(String(p.folio).split('-')[1], 10) || 0);
+    return 'P' + anio + '-' + String((n.length ? Math.max.apply(null, n) : 0) + 1).padStart(3, '0');
+  }
+  function fechaPresu(iso) { if (!iso) return ''; const d = deISO(iso); return d.getDate() + ' de ' + MESES[d.getMonth()] + ' de ' + d.getFullYear(); }
+  function opcionesEstablecimiento(sel) {
+    const inms = DB.inmuebles.slice().sort((a, b) => (nombreCli(cliente(a.clienteId)) + a.nombreComercial).localeCompare(nombreCli(cliente(b.clienteId)) + b.nombreComercial));
+    return '<option value="">Prospecto o establecimiento no registrado</option>' + inms.map(i => '<option value="' + i.id + '"' + (i.id === sel ? ' selected' : '') + '>' + esc(nombreCli(cliente(i.clienteId)) + ' · ' + i.nombreComercial) + '</option>').join('');
+  }
+
+  function vistaPresupuestos() {
+    titulo('Presupuestos');
+    const f = (estado.filtroPresu || '').toLowerCase();
+    const lista = (DB.presupuestos || []).filter(p => !f || [p.folio, p.establecimiento, p.tipoServicio, p.estado].join(' ').toLowerCase().includes(f))
+      .sort((a, b) => String(b.folio).localeCompare(String(a.folio)));
+    return '<div class="tarjeta"><div class="tarjeta-cab"><input class="buscador" id="buscarPresu" placeholder="Buscar folio, establecimiento o servicio…" value="' + esc(estado.filtroPresu || '') + '"><button class="btn" data-acc="presuNuevo">+ Nuevo presupuesto</button></div>' +
+      '<p class="sub">Arme el presupuesto, revíselo en PDF con el formato de Grupo VIME y guárdelo para editarlo después. Los precios del catálogo son sugeridos; ajústelos en cada presupuesto.</p>' +
+      (lista.length ? '<div class="envoltura-tabla"><table class="tabla"><thead><tr><th>Folio</th><th>Fecha</th><th>Establecimiento</th><th>Servicio</th><th class="num">Total</th><th>Estado</th></tr></thead><tbody>' +
+        lista.map(p => '<tr class="clic" data-acc="ir" data-h="#/presupuesto/' + p.id + '"><td><b>' + esc(p.folio) + '</b></td><td>' + esc(fechaCorta(p.fecha)) + '</td><td>' + esc(p.establecimiento || '—') + '</td><td>' + esc(p.tipoServicio || '') + '</td><td class="num">' + Presupuestos.pesos(Presupuestos.calcular(p).total) + '</td><td><span class="etiqueta" style="background:' + (COLOR_PRESU[p.estado] || '#636363') + '">' + esc(p.estado || 'Borrador') + '</span></td></tr>').join('') +
+        '</tbody></table></div>' : '<div class="vacio">' + (f ? 'Sin resultados.' : 'Aún no hay presupuestos.') + '</div>') + '</div>';
+  }
+
+  function formNuevoPresupuesto() {
+    const anio = +hoyISO().slice(0, 4);
+    abrirModal('Nuevo presupuesto', '<form class="form" id="formPresu">' +
+      '<div class="campo ancho"><label for="npTipo">Tipo de servicio *</label><input id="npTipo" list="l_np_tipo" value="' + esc(Presupuestos.TIPOS_SERVICIO[0]) + '"><datalist id="l_np_tipo">' + Presupuestos.TIPOS_SERVICIO.map(t => '<option value="' + esc(t) + '">').join('') + '</datalist><span class="ayuda">Aparece en el encabezado como «Servicio: …». Puede escribir otro.</span></div>' +
+      '<div class="campo ancho"><label for="npInm">Establecimiento</label><select id="npInm">' + opcionesEstablecimiento('') + '</select></div>' +
+      '<div class="campo ancho"><label for="npEst">Nombre del establecimiento en el presupuesto *</label><input id="npEst" placeholder="Ej. Hotel Huayacan"></div>' +
+      '<div class="campo"><label for="npAnio">Ejercicio</label><input id="npAnio" type="number" value="' + (anio + (+hoyISO().slice(5, 7) >= 10 ? 1 : 0)) + '"></div>' +
+      '<div class="campo check"><input type="checkbox" id="npLlenar" checked><label for="npLlenar">Llenar la tabla con los conceptos de este tipo de servicio</label></div>' +
+      '<div class="error-form" id="errNp" hidden></div><div class="form-pie"><button type="button" class="btn sec" data-acc="cerrarModal">Cancelar</button><button class="btn" type="submit">Crear presupuesto</button></div></form>');
+    $('#npInm').onchange = e => { const i = inmueble(e.target.value); if (i && i.id) $('#npEst').value = i.nombreComercial; };
+    $('#formPresu').addEventListener('submit', async e => {
+      e.preventDefault();
+      const tipo = $('#npTipo').value.trim(), est = $('#npEst').value.trim(), anio = +$('#npAnio').value || +hoyISO().slice(0, 4);
+      if (!tipo || !est) { $('#errNp').textContent = 'Escriba el tipo de servicio y el nombre del establecimiento.'; $('#errNp').hidden = false; return; }
+      const p = {
+        folio: siguienteFolio(+hoyISO().slice(0, 4)), fecha: hoyISO(), estado: 'Borrador', tipoServicio: tipo, inmuebleId: $('#npInm').value, establecimiento: est, ejercicio: anio,
+        conceptos: $('#npLlenar').checked ? Presupuestos.conceptosDe(tipo, anio) : [], impuestos: {}, mostrarTotal: true, condiciones: Presupuestos.CONDICIONES.slice(), autor: Datos.usuario().nombre
+      };
+      if (!p.conceptos.length) p.conceptos.push({ servicio: '', descripcion: '', costo: '', cantidad: 1, nota: '' });
+      const g = await guardar('presupuestos', p, 'Presupuesto ' + p.folio + ' creado');
+      cerrarModal(); estado.presu = null; location.hash = '#/presupuesto/' + g.id;
+    });
+  }
+
+  function htmlTotalesPresu(p) {
+    const t = Presupuestos.calcular(p), imp = p.impuestos || {}, E = Presupuestos.ETIQUETAS_IMP;
+    const fila = (e, v, fuerte) => '<div style="display:flex;justify-content:space-between;gap:20px;padding:4px 0;' + (fuerte ? 'font-weight:700;color:var(--marino);border-top:2px solid var(--gris-claro);margin-top:4px;padding-top:6px' : '') + '"><span>' + e + '</span><span>' + v + '</span></div>';
+    return fila('Subtotal', Presupuestos.pesos(t.subtotal)) + (imp.iva ? fila(E.iva, Presupuestos.pesos(t.iva)) : '') + (imp.retIva ? fila(E.retIva, '- ' + Presupuestos.pesos(t.retIva)) : '') + (imp.retIsr ? fila(E.retIsr, '- ' + Presupuestos.pesos(t.retIsr)) : '') + fila('Total', Presupuestos.pesos(t.total), true);
+  }
+
+  function vistaPresupuesto(id) {
+    const base = porId('presupuestos', id); if (!base) return '<div class="vacio">Presupuesto no encontrado.</div>';
+    if (!estado.presu || estado.presu.id !== id) { estado.presu = copia(base); estado.presuSucio = false; }
+    const p = estado.presu;
+    titulo('Presupuesto ' + p.folio);
+    const imp = p.impuestos || {};
+    const conceptos = (p.conceptos || []).map((c, i) => '<div style="border:1px solid var(--gris-claro);border-radius:8px;padding:10px 12px;margin-bottom:10px;background:#fff">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><b style="color:var(--marino)">Concepto ' + (i + 1) + '</b><span>' +
+      '<button class="btn-icono" data-acc="presuMover" data-i="' + i + '" data-d="-1" title="Subir"' + (i ? '' : ' disabled') + '>↑</button><button class="btn-icono" data-acc="presuMover" data-i="' + i + '" data-d="1" title="Bajar"' + (i < p.conceptos.length - 1 ? '' : ' disabled') + '>↓</button><button class="btn-icono" data-acc="presuQuitar" data-i="' + i + '" title="Quitar">✕</button></span></div>' +
+      '<div class="form form-presu-a">' +
+      '<div class="campo"><label>Servicio</label><textarea rows="4" data-prc="servicio" data-i="' + i + '">' + esc(c.servicio) + '</textarea></div>' +
+      '<div class="campo"><label>Descripción</label><textarea rows="6" data-prc="descripcion" data-i="' + i + '">' + esc(c.descripcion) + '</textarea></div></div>' +
+      '<div class="form form-presu-b" style="margin-top:8px">' +
+      '<div class="campo"><label>Costo unitario</label><input type="number" min="0" step="0.01" data-prc="costo" data-i="' + i + '" value="' + esc(c.costo) + '" placeholder="Vacío = por definir"></div>' +
+      '<div class="campo"><label>Cantidad</label><input type="number" min="1" step="1" data-prc="cantidad" data-i="' + i + '" value="' + esc(c.cantidad || 1) + '"></div>' +
+      '<div class="campo"><label>Nota del costo</label><input data-prc="nota" data-i="' + i + '" value="' + esc(c.nota || '') + '" placeholder="Ej. (Por curso)"></div>' +
+      '<div class="campo"><label>Importe</label><div style="padding:8px 0;font-weight:700;color:var(--marino)" id="impPresu' + i + '">' + Presupuestos.pesos(Presupuestos.importe(c)) + '</div></div></div></div>').join('');
+    return '<div class="migas"><a href="#/presupuestos">Presupuestos</a> › ' + esc(p.folio) + '</div>' +
+      '<div class="tarjeta"><div class="tarjeta-cab"><div><h2 style="margin:0">Presupuesto ' + esc(p.folio) + '</h2><span class="sub" id="presuSucio" style="color:var(--ambar);font-weight:600">' + (estado.presuSucio ? 'Cambios sin guardar' : '') + '</span></div>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-acc="presuGuardar">💾 Guardar</button><button class="btn acento" data-acc="presuVer">👁 Ver PDF</button><button class="btn sec" data-acc="presuDuplicar">Duplicar</button><button class="btn peligro" data-acc="presuBorrar">Eliminar</button></div></div>' +
+      '<div class="form">' +
+      '<div class="campo"><label>Fecha</label><input type="date" data-pre="fecha" value="' + esc(p.fecha) + '"></div>' +
+      '<div class="campo"><label>Estado</label><select data-pre="estado">' + ESTADOS_PRESU.map(e => '<option' + (e === (p.estado || 'Borrador') ? ' selected' : '') + '>' + e + '</option>').join('') + '</select></div>' +
+      '<div class="campo ancho"><label>Tipo de servicio</label><input data-pre="tipoServicio" list="l_pre_tipo" value="' + esc(p.tipoServicio) + '"><datalist id="l_pre_tipo">' + Presupuestos.TIPOS_SERVICIO.map(t => '<option value="' + esc(t) + '">').join('') + '</datalist></div>' +
+      '<div class="campo"><label>Establecimiento registrado</label><select data-pre="inmuebleId">' + opcionesEstablecimiento(p.inmuebleId) + '</select></div>' +
+      '<div class="campo"><label>Nombre en el presupuesto</label><input data-pre="establecimiento" id="presuEst" value="' + esc(p.establecimiento) + '"></div>' +
+      '</div></div>' +
+      '<div class="tarjeta"><div class="tarjeta-cab"><h3>Tabla de servicios</h3><div style="display:flex;gap:8px;flex-wrap:wrap"><select id="presuCatalogo" class="buscador" style="min-width:0">' + Presupuestos.CATALOGO.map(c => '<option value="' + c.clave + '">' + esc(c.nombre) + '</option>').join('') + '</select><button class="btn sec chico" data-acc="presuAgregarCat">+ Del catálogo</button><button class="btn sec chico" data-acc="presuAgregar">+ Concepto en blanco</button></div></div>' +
+      '<p class="sub">En la descripción, cada renglón que empieza con «•» se imprime con viñeta. Deje el costo vacío para «Por definir» o en 0 para «Sin costo».</p>' +
+      (conceptos || '<div class="vacio">Agregue al menos un concepto.</div>') + '</div>' +
+      '<div class="rejilla dos"><div class="tarjeta"><h3>Impuestos</h3>' +
+      [['iva', 'Sumar IVA (16 % sobre el subtotal)'], ['retIva', 'Restar retención de IVA (10.6667 % del subtotal)'], ['retIsr', 'Restar retención de ISR (1.25 % del subtotal)']].map(([k, t]) => '<div class="campo check"><input type="checkbox" id="imp_' + k + '" data-pri="' + k + '"' + (imp[k] ? ' checked' : '') + '><label for="imp_' + k + '">' + t + '</label></div>').join('') +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button class="btn sec chico" data-acc="presuMoral">Persona moral (IVA y retenciones)</button><button class="btn sec chico" data-acc="presuSinImp">Sin impuestos</button></div>' +
+      '<div class="campo check" style="margin-top:8px"><input type="checkbox" id="presuTotal" data-pre="mostrarTotal"' + (p.mostrarTotal !== false ? ' checked' : '') + '><label for="presuTotal">Mostrar el total en el PDF</label></div></div>' +
+      '<div class="tarjeta"><h3>Totales</h3><div id="presuTotales">' + htmlTotalesPresu(p) + '</div></div></div>' +
+      '<div class="tarjeta"><div class="tarjeta-cab"><h3>Condiciones generales</h3><button class="btn sec chico" data-acc="presuCondDef">Restablecer las predeterminadas</button></div>' +
+      '<div class="campo"><textarea rows="7" data-pre="condicionesTexto">' + esc((p.condiciones || []).join('\n')) + '</textarea><span class="ayuda">Una condición por renglón.</span></div></div>';
+  }
+  function marcarPresu() { estado.presuSucio = true; const s = $('#presuSucio'); if (s) s.textContent = 'Cambios sin guardar'; const t = $('#presuTotales'); if (t) t.innerHTML = htmlTotalesPresu(estado.presu); }
+  function datosPdfPresu(p) { return Object.assign({}, p, { fecha: fechaPresu(p.fecha) }); }
+  function verPresupuesto() {
+    const p = copia(estado.presu);
+    Presupuestos.prepararLetra();
+    verArchivo({
+      nombre: nombreArchivo('Presupuesto ' + p.folio + ' - ' + (p.establecimiento || '') + '.pdf'), sub: (p.tipoServicio || '') + ' · ' + (estado.presuSucio ? 'vista con los cambios aún sin guardar' : 'guardado'),
+      cargando: 'Generando el presupuesto en PDF…',
+      obtener: async () => { const r = await Presupuestos.pdf(datosPdfPresu(p)); if (r.letra !== 'Arial Nova Light') toast('Este equipo no tiene Arial Nova Light: el PDF se generó con una letra parecida.'); return new Blob([r.bytes], { type: 'application/pdf' }); }
+    });
+  }
+
+  /* ---------- Constancias ya emitidas de un curso, en un solo PDF ---------- */
+  async function verConstancias(cuId) {
+    const cu = cursoPorId(cuId); const ins = instructorDe(cu.instructorId);
+    if (!ins) { toast('Asigne un capacitador al curso.', true); return; }
+    const ps = esEmpresa(cu)
+      ? (cu.folioEmpresa && (registroDe(cu.folioEmpresa) || {}).estado !== 'cancelada' ? [{ folio: cu.folioEmpresa, leyenda: cu.leyendaEmpresa || 'El personal brigadista de', empresa: cu.empresa }] : [])
+      : (cu.participantes || []).filter(p => p.folio && !p.excluir && (registroDe(p.folio) || {}).estado !== 'cancelada');
+    if (!ps.length) { toast('Este curso aún no tiene constancias con folio vigente.', true); return; }
+    const clave = prefijoFolio(cu).replace(/[^A-Z0-9-]+/g, '');
+    verArchivo({
+      nombre: 'Constancias_' + clave + '.pdf', sub: cu.curso + ' · ' + ps.length + ' constancia(s) emitida(s): ' + ps[0].folio + (ps.length > 1 ? ' a ' + ps[ps.length - 1].folio : ''),
+      cargando: 'Armando las ' + ps.length + ' constancia(s)… (la primera vez tarda unos segundos)',
+      obtener: async () => {
+        const firma = await bytesFirma(ins);
+        const res = await Constancias.generar({ curso: Object.assign({}, cu, { fechasTexto: fechasCurso(cu) }), participantes: ps, instructor: Object.assign({}, ins, { firma }), urlVerificacion: CONFIG.VERIFICACION_URL });
+        return new Blob([res.lote], { type: 'application/pdf' });
+      }
+    });
+  }
+
   /** Muestra un texto con formato de WhatsApp (*negritas*, _cursivas_, ```monoespaciado```). */
   function formatoWhatsApp(t) {
     return esc(t).replace(/\*([^*\n]+)\*/g, '<b>$1</b>').replace(/_([^_\n]+)_/g, '<i>$1</i>')
@@ -985,6 +1113,31 @@
     quitarParticipante: async el => { const cu = cursoPorId(el.dataset.id); const p = cu.participantes[+el.dataset.k]; if (!confirm('¿Quitar a ' + nombreParticipante(p) + ' de la lista?')) return; await guardar('cursos', Object.assign({}, cu, { participantes: cu.participantes.filter((x, j) => j !== +el.dataset.k) }), 'Participante quitado'); },
     emitirCurso: el => emitirCurso(el.dataset.id),
     generarConstancias: el => generarConstancias(el.dataset.id),
+    verConstancias: el => verConstancias(el.dataset.id),
+    presuNuevo: () => formNuevoPresupuesto(),
+    presuGuardar: async () => {
+      const g = await guardar('presupuestos', estado.presu, 'Presupuesto guardado');
+      estado.presu = copia(g); estado.presuSucio = false; pintar();
+    },
+    presuVer: () => verPresupuesto(),
+    presuDuplicar: async () => {
+      const p = copia(estado.presu); delete p.id; delete p.creado;
+      Object.assign(p, { folio: siguienteFolio(+hoyISO().slice(0, 4)), fecha: hoyISO(), estado: 'Borrador', autor: Datos.usuario().nombre });
+      const g = await guardar('presupuestos', p, 'Copia creada: ' + p.folio);
+      estado.presu = null; estado.presuSucio = false; location.hash = '#/presupuesto/' + g.id;
+    },
+    presuBorrar: async () => {
+      if (!confirm('¿Eliminar el presupuesto ' + estado.presu.folio + '? No se puede deshacer.')) return;
+      const id = estado.presu.id; estado.presu = null; estado.presuSucio = false;
+      await borrar('presupuestos', id, 'Presupuesto eliminado'); location.hash = '#/presupuestos';
+    },
+    presuAgregar: () => { estado.presu.conceptos.push({ servicio: '', descripcion: '', costo: '', cantidad: 1, nota: '' }); estado.presuSucio = true; pintar(); },
+    presuAgregarCat: () => { const c = Presupuestos.concepto($('#presuCatalogo').value, estado.presu.ejercicio || +hoyISO().slice(0, 4)); if (c) { estado.presu.conceptos.push(c); estado.presuSucio = true; pintar(); } },
+    presuQuitar: el => { const i = +el.dataset.i; if (!confirm('¿Quitar el concepto ' + (i + 1) + '?')) return; estado.presu.conceptos.splice(i, 1); estado.presuSucio = true; pintar(); },
+    presuMover: el => { const i = +el.dataset.i, j = i + +el.dataset.d, cs = estado.presu.conceptos; if (j < 0 || j >= cs.length) return; const t = cs[i]; cs[i] = cs[j]; cs[j] = t; estado.presuSucio = true; pintar(); },
+    presuMoral: () => { estado.presu.impuestos = { iva: true, retIva: true, retIsr: true }; estado.presuSucio = true; pintar(); },
+    presuSinImp: () => { estado.presu.impuestos = {}; estado.presuSucio = true; pintar(); },
+    presuCondDef: () => { if (!confirm('¿Cambiar las condiciones por las predeterminadas?')) return; estado.presu.condiciones = Presupuestos.CONDICIONES.slice(); estado.presuSucio = true; pintar(); },
     bajarLote: () => { if (ultimoLote) descargar(new Blob([ultimoLote.res.lote], { type: 'application/pdf' }), ultimoLote.nombreLote); },
     bajarZip: async () => { if (!ultimoLote) return; try { descargar(await Constancias.zip(ultimoLote.res, ultimoLote.nombreLote), ultimoLote.nombreZip); } catch (e) { toast(e.message, true); } },
     loteDrive: () => loteDrive(),
@@ -1231,7 +1384,7 @@
         : '<div class="etapa' + (ps.length && !pend.length ? ' hecha' : '') + '"><span class="txt">2. Folios asignados y registrados para validación (' + emitidas.length + ' de ' + ps.length + ')</span>' +
           (pend.length ? '<button class="btn chico" data-acc="emitirCurso" data-id="' + cu.id + '">Asignar ' + pend.length + ' folio' + (pend.length === 1 ? '' : 's') + '</button>' : '') + '</div>') +
       '<div class="etapa' + (cu.generadas ? ' hecha' : '') + '"><span class="txt">3. ' + (emp ? 'Constancia de la empresa en PDF' : 'Constancias en PDF (lote para imprimir + una por participante)') + (cu.generadas ? ' <span class="sub">· última vez ' + esc(fechaCorta(String(cu.generadas).slice(0, 10))) + '</span>' : '') + '</span>' +
-      ((emp ? cu.folioEmpresa : emitidas.length) ? '<button class="btn acento chico" data-acc="generarConstancias" data-id="' + cu.id + '">⬇ Generar PDF</button>' : '') + '</div>' +
+      ((emp ? cu.folioEmpresa : emitidas.length) ? '<span style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn sec chico" data-acc="verConstancias" data-id="' + cu.id + '">👁 Ver constancias emitidas</button>' + '<button class="btn acento chico" data-acc="generarConstancias" data-id="' + cu.id + '">⬇ Generar PDF</button>' + '</span>' : '') + '</div>' +
       '<p class="sub" style="margin-top:10px">El PDF se arma en este equipo con el diseño oficial (logos de Aula Virtual y Grupo VIME, un capacitador, folio y QR). Los folios nunca se repiten: los asigna el servidor.</p></div>' +
       '<div class="tarjeta"><div class="tarjeta-cab"><h3>' + (dc3 ? 'DC-3 y material didáctico' : 'Material didáctico <span class="sub">(este curso no lleva DC-3)</span>') + '</h3><button class="btn sec" data-acc="ordenClaude" data-id="' + cu.id + '">🤖 Orden para Claude</button></div>' +
       '<p class="sub">' + (dc3 ? 'Las DC-3 (formato STPS en Word) y el' : 'El') + ' material didáctico (Manual del Participante, Guía Visual y póster) ' + (dc3 ? 'los genera' : 'lo genera') + ' la skill «Aula Virtual Grupo VIME» en Claude. Este botón arma la orden con los datos del curso, el capacitador, la lista y los folios para que solo la pegue en el chat junto con el contenido del curso y la firma.</p></div>';
@@ -1559,6 +1712,28 @@
     if (el.dataset && el.dataset.cambio && CAMBIO[el.dataset.cambio]) CAMBIO[el.dataset.cambio](el);
   });
   document.addEventListener('input', e => {
+    const t = e.target, p = estado.presu;
+    if (p && t.dataset) {
+      if (t.dataset.pre) {
+        const k = t.dataset.pre;
+        if (k === 'condicionesTexto') p.condiciones = t.value.split(/\n/);
+        else if (k === 'mostrarTotal') p.mostrarTotal = t.checked;
+        else p[k] = t.value;
+        if (k === 'inmuebleId') { const i = inmueble(t.value); if (i && i.id) { p.establecimiento = i.nombreComercial; const c = $('#presuEst'); if (c) c.value = i.nombreComercial; } }
+        marcarPresu(); return;
+      }
+      if (t.dataset.prc) {
+        const c = p.conceptos[+t.dataset.i], k = t.dataset.prc;
+        c[k] = k === 'costo' ? (t.value === '' ? '' : +t.value) : k === 'cantidad' ? (+t.value || 1) : t.value;
+        const s = document.getElementById('impPresu' + t.dataset.i); if (s) s.textContent = Presupuestos.pesos(Presupuestos.importe(c));
+        marcarPresu(); return;
+      }
+      if (t.dataset.pri) { p.impuestos = Object.assign({}, p.impuestos, { [t.dataset.pri]: t.checked }); marcarPresu(); return; }
+    }
+    if (e.target.id === 'buscarPresu') {
+      estado.filtroPresu = e.target.value; const pos = e.target.selectionStart; pintar();
+      const b = $('#buscarPresu'); b.focus(); b.setSelectionRange(pos, pos);
+    }
     if (e.target.id === 'buscarCliente') {
       estado.filtroClientes = e.target.value; const pos = e.target.selectionStart; pintar();
       const b = $('#buscarCliente'); b.focus(); b.setSelectionRange(pos, pos);
@@ -1570,7 +1745,14 @@
     if (e.target.dataset && e.target.dataset.cambio === 'avanceStps') $('#numStps').textContent = e.target.value + '%';
   });
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#capaModal').hidden) cerrarModal(); });
-  window.addEventListener('hashchange', pintar);
+  window.addEventListener('hashchange', () => {
+    if (estado.presu && estado.presuSucio && location.hash !== '#/presupuesto/' + estado.presu.id) {
+      if (!confirm('El presupuesto ' + estado.presu.folio + ' tiene cambios sin guardar. ¿Salir sin guardarlos?')) { location.hash = '#/presupuesto/' + estado.presu.id; return; }
+      estado.presuSucio = false; estado.presu = null;
+    }
+    pintar();
+  });
+  window.addEventListener('beforeunload', e => { if (estado.presuSucio) { e.preventDefault(); e.returnValue = ''; } });
 
   /* ======================= Arranque ======================= */
   function pintarUsuario() {
@@ -1615,8 +1797,8 @@
     pintarUsuario();
     cargarTodo();
     if (!Datos.MODO_PRUEBA) {
-      setInterval(() => { if (document.visibilityState === 'visible' && $('#capaModal').hidden) cargarTodo(); }, 120000);
-      document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && $('#capaModal').hidden) cargarTodo(); });
+      setInterval(() => { if (document.visibilityState === 'visible' && $('#capaModal').hidden && !estado.presuSucio) cargarTodo(); }, 120000);
+      document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && $('#capaModal').hidden && !estado.presuSucio) cargarTodo(); });
       if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => { });
     }
   }

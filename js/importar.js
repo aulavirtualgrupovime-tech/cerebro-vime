@@ -350,7 +350,7 @@ const Importador = (() => {
     }
     const doc = await lib.getDocument({ data: arrayBuffer }).promise;
     contenedor.innerHTML = '';
-    const ancho = Math.max(300, contenedor.clientWidth - 24);
+    const ancho = Math.max(280, contenedor.clientWidth - 44);
     for (let p = 1; p <= doc.numPages; p++) {
       const pag = await doc.getPage(p);
       const base = pag.getViewport({ scale: 1 });

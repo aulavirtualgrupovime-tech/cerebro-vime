@@ -1,4 +1,14 @@
 /** Datos FICTICIOS para la versión de prueba. Las fechas se calculan a partir de hoy. */
+/** Firma ficticia dibujada (solo para la versión de prueba). */
+function firmaDemo() {
+  try {
+    const c = document.createElement('canvas'); c.width = 360; c.height = 120; const g = c.getContext('2d');
+    g.strokeStyle = '#1a2a6c'; g.lineWidth = 3; g.lineCap = 'round'; g.beginPath(); g.moveTo(20, 80);
+    for (let x = 20; x <= 330; x += 6) g.lineTo(x, 70 + Math.sin(x / 14) * 22 * Math.cos(x / 41));
+    g.stroke(); g.beginPath(); g.moveTo(60, 98); g.lineTo(300, 92); g.stroke();
+    return c.toDataURL('image/png');
+  } catch (e) { return ''; }
+}
 function crearDatosDemo() {
   const hoy = hoyISO(), anio = +hoy.slice(0, 4);
   const d = n => sumarDias(hoy, n);
@@ -75,7 +85,7 @@ function crearDatosDemo() {
     R({ id: 'doc_6', servicioId: 'ser_6', resolucionId: 'rsl_4', categoria: 'oficio', nombre: 'Oficio APROBADO.pdf', url: 'https://drive.google.com/', autor: 'Directora', fecha: anio + '-04-28' })
   ];
   const ajustes = [R({ id: 'logos', lista: [{ id: 'logo_demo', nombre: 'Super Sur (ficticio)', url: LOGOS_FIJOS.demoCliente }] }),
-    R({ id: 'instructores', lista: [{ id: 'ins_demo', titulo: 'Lic.', nombre: 'Instructora Ficticia Pérez', cargo: 'Capacitador', registros: ['Registro STPS: XXXX-000000-XXX-0000 (ficticio)', 'Registro Protección Civil: CEPC/RT/0000/2026 (ficticio)'] }] }),
+    R({ id: 'instructores', lista: [{ id: 'ins_demo', titulo: 'Lic.', nombre: 'Instructora Ficticia Pérez', cargo: 'Capacitador', firmaData: firmaDemo(), registros: ['Registro STPS: XXXX-000000-XXX-0000 (ficticio)', 'Registro Protección Civil: CEPC/RT/0000/2026 (ficticio)'] }] }),
     R({ id: 'folios', contadores: {} })];
   const cursos = [R({ id: 'cur_demo', curso: 'Formación de Brigadas', clave: 'FBR', modalidad: 'En línea', fechaInicio: d(-8), fechaFin: d(-8), horas: 2, sede: '', instructorId: 'ins_demo', eventoId: 'eve_8', servicioId: 'ser_10', empresa: 'Colegio Ficticio de Cuernavaca, A.C.',
     participantes: [
@@ -101,5 +111,7 @@ function crearDatosDemo() {
     cobro('ser_9', 15000, true, [m('pago', mesActual + '02', 7500)]),
     cobro('ser_10', 7000, false, [])
   ];
-  return { clientes, inmuebles, servicios, eventos, pendientes, notas, documentos, responsables, ajustes, cursos, constancias, cobros };
+  const presupuestos = [R({ id: 'pre_1', folio: 'P' + anio + '-001', fecha: hoy, estado: 'Enviado', tipoServicio: Presupuestos.TIPOS_SERVICIO[0], inmuebleId: '', establecimiento: 'Hotel Ficticio del Valle (prospecto)', ejercicio: anio + 1,
+    conceptos: Presupuestos.conceptosDe(Presupuestos.TIPOS_SERVICIO[0], anio + 1), impuestos: { iva: true, retIva: true, retIsr: true }, mostrarTotal: true, condiciones: Presupuestos.CONDICIONES.slice(), autor: 'Directora' })];
+  return { clientes, inmuebles, servicios, eventos, pendientes, notas, documentos, responsables, ajustes, cursos, constancias, cobros, presupuestos };
 }
