@@ -1286,6 +1286,22 @@
   function fechasCurso(cu) { return cu.fechasTexto || textoFechasCurso(cu.fechaInicio, cu.fechaFin); }
   function registroDe(folio) { return (DB.constancias || []).find(x => x.folio === folio); }
   const aplicaDC3 = cu => cu.aplicaDC3 !== 'no';
+  // Representantes de la DC-3: «aplica» (con nombre), «no_aplica» o «no_cuenta» (en ambos casos queda en blanco en la DC-3)
+  const ESTADOS_REP = [{ v: 'aplica', t: 'APLICA (escribir el nombre)' }, { v: 'no_aplica', t: 'NO APLICA' }, { v: 'no_cuenta', t: 'NO CUENTA con el dato' }];
+  const TEXTO_REP = { aplica: 'APLICA', no_aplica: 'NO APLICA', no_cuenta: 'NO CUENTA con el dato' };
+  const estadoRep = (cu, k) => cu[k + 'Estado'] || 'aplica';
+  const nombreRep = (cu, k) => estadoRep(cu, k) === 'aplica' ? String(cu[k] || '').trim() : '';
+  const RFC_VALIDO = /^[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}$/;
+  /** Datos de la empresa que faltan para poder emitir las DC-3. */
+  function faltaDC3(cu) {
+    if (!aplicaDC3(cu)) return [];
+    const f = [];
+    if (!cu.rfcEmpresa) f.push('RFC de la empresa'); else if (!RFC_VALIDO.test(cu.rfcEmpresa)) f.push('RFC de la empresa válido');
+    if (estadoRep(cu, 'repLegal') === 'aplica' && !nombreRep(cu, 'repLegal')) f.push('nombre del representante legal');
+    if (estadoRep(cu, 'repTrab') === 'aplica' && !nombreRep(cu, 'repTrab')) f.push('nombre del representante de los trabajadores');
+    return f;
+  }
+  const textoRep = (cu, k) => estadoRep(cu, k) === 'aplica' ? (esc(nombreRep(cu, k)) || '<span style="color:var(--rojo)">Falta el nombre</span>') : '<span class="sub">' + TEXTO_REP[estadoRep(cu, k)] + ' (en blanco en la DC-3)</span>';
   const esEmpresa = cu => cu.tipoConstancia === 'empresa';
   const tieneFolios = cu => !!cu.folioEmpresa || (cu.participantes || []).some(p => p.folio);
   function problemas(p, todos, dc3) {
@@ -1364,7 +1380,10 @@
       dato('Sede', esc(cu.sede || '—')) + dato('Capacitador', ins ? esc(((ins.titulo || '') + ' ' + ins.nombre).trim()) + ((ins.firmaData || ins.firmaDriveId) ? '' : ' <span class="etiqueta" style="background:var(--rojo)">sin firma</span>') : '<span style="color:var(--rojo)">Sin asignar</span>') +
       dato('Constancia de participación', emp ? 'Una para toda la empresa: «' + esc(textoEmpresa(cu)) + '»' : 'Una por participante') +
       dato('DC-3', dc3 ? '<b style="color:var(--verde)">APLICA</b>' : '<b style="color:var(--gris)">NO APLICA</b>') +
-      dato('Folios', esc(prefijoFolio(cu)) + (emp ? '-NNN (uno para la empresa)' : '-001, -002…')) + '</div></div>' +
+      (dc3 ? dato('RFC de la empresa', cu.rfcEmpresa ? esc(cu.rfcEmpresa) + (RFC_VALIDO.test(cu.rfcEmpresa) ? '' : ' <span class="etiqueta" style="background:var(--rojo)">revisar</span>') : '<span style="color:var(--rojo)">Falta</span>') +
+        dato('Representante legal', textoRep(cu, 'repLegal')) + dato('Representante de los trabajadores', textoRep(cu, 'repTrab')) : '') +
+      dato('Folios', esc(prefijoFolio(cu)) + (emp ? '-NNN (uno para la empresa)' : '-001, -002…')) + '</div>' +
+      (faltaDC3(cu).length ? '<div class="aviso-it rojo" style="margin-top:12px;cursor:default"><div><b>Faltan datos para emitir las DC-3</b><span>Complete en «Editar»: ' + esc(faltaDC3(cu).join(', ')) + '.</span></div></div>' : '') + '</div>' +
       '<div class="tarjeta"><div class="tarjeta-cab"><h3>Participantes (' + ps.length + ')</h3><div style="display:flex;gap:8px;flex-wrap:wrap">' +
       '<button class="btn sec" data-acc="importarLista" data-id="' + cu.id + '">📥 Importar lista (Excel, Word o foto)</button><button class="btn acento" data-acc="nuevoParticipante" data-id="' + cu.id + '">+ Agregar</button></div></div>' +
       (emp ? '<p class="sub">Con constancia para toda la empresa la lista es opcional' + (dc3 ? ', pero se necesita para las DC-3.' : '; sirve como registro de asistencia.') + '</p>' : '') +
@@ -1392,7 +1411,8 @@
 
   function formCurso(cu, pre) {
     const servs = DB.servicios.filter(s => s.tipo === 'CAPACITACIONES' && !s.archivado);
-    const val = Object.assign({ modalidad: 'Presencial', instructorId: (instructores()[0] || {}).id || '', tipoConstancia: 'individual', aplicaDC3: 'si', leyendaEmpresa: 'El personal brigadista de' }, pre || {}, cu || {});
+    const val = Object.assign({ modalidad: 'Presencial', instructorId: (instructores()[0] || {}).id || '', tipoConstancia: 'individual', aplicaDC3: 'si', leyendaEmpresa: 'El personal brigadista de', repLegalEstado: 'aplica', repTrabEstado: 'aplica' }, pre || {}, cu || {});
+    if (!val.rfcEmpresa && val.servicioId) { const { c } = cadena(servicio(val.servicioId) || {}); val.rfcEmpresa = (c && c.rfc) || ''; }
     const campos = [
       { k: 'curso', t: 'Nombre del curso', req: true, ancho: true },
       { k: 'prefijoFolio', t: 'Prefijo del folio', ayuda: 'Se imprime tal cual, seguido de -001, -002… Ej.: GV.FB2026 → GV.FB2026-001. Si lo deja vacío: AV.{clave}{año}.' },
@@ -1407,6 +1427,11 @@
       { k: 'servicioId', t: 'Cliente (servicio de capacitaciones)', tipo: 'select', opciones: [{ v: '', t: 'Grupo abierto / sin cliente' }].concat(servs.map(s => { const { i, c } = cadena(s); return { v: s.id, t: nombreCli(c) + ' · ' + (i.nombreComercial || '') + ' · ' + s.ejercicio }; })) },
       { k: 'empresa', t: 'Razón social de la empresa', ancho: true, ayuda: 'Se usa en la DC-3 y en la constancia para toda la empresa.' },
       { k: 'aplicaDC3', t: 'DC-3', tipo: 'select', opciones: [{ v: 'si', t: 'APLICA' }, { v: 'no', t: 'NO APLICA (solo constancia de participación)' }] },
+      { k: 'rfcEmpresa', t: 'RFC de la empresa (DC-3)', ayuda: 'Obligatorio para emitir las DC-3. Si eligió un cliente, se toma su RFC.' },
+      { k: 'repLegalEstado', t: 'Representante legal (DC-3)', tipo: 'select', opciones: ESTADOS_REP, ayuda: 'NO APLICA o NO CUENTA: el espacio queda en blanco en la DC-3.' },
+      { k: 'repLegal', t: 'Nombre del representante legal' },
+      { k: 'repTrabEstado', t: 'Representante de los trabajadores (DC-3)', tipo: 'select', opciones: ESTADOS_REP, ayuda: 'Se requiere si la empresa tiene más de 50 trabajadores. NO APLICA o NO CUENTA: queda en blanco.' },
+      { k: 'repTrab', t: 'Nombre del representante de los trabajadores' },
       { k: 'tipoConstancia', t: 'Constancia de participación', tipo: 'select', opciones: [{ v: 'individual', t: 'Una por participante' }, { v: 'empresa', t: 'Una para toda la empresa' }] },
       { k: 'leyendaEmpresa', t: 'Leyenda de la constancia para toda la empresa', ancho: true, ayuda: 'Va antes de la razón social. Ej.: «El personal brigadista de» → «El personal brigadista de Hotelera Tlahuica, S.A. de C.V.»' }
     ];
@@ -1414,6 +1439,16 @@
       if (v.clave) v.clave = String(v.clave).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
       v.prefijoFolio = String(v.prefijoFolio || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/[^A-Z0-9.\-]/g, '').replace(/^[.\-]+|[.\-]+$/g, '').slice(0, 24);
       if (v.fechaFin && v.fechaFin < v.fechaInicio) return { error: 'La fecha de término es anterior a la de inicio.' };
+      v.rfcEmpresa = String(v.rfcEmpresa || '').toUpperCase().replace(/[\s-]/g, '');
+      if (!v.rfcEmpresa && v.servicioId) { const { c } = cadena(servicio(v.servicioId)); v.rfcEmpresa = String((c && c.rfc) || '').toUpperCase(); }
+      if (v.repLegalEstado !== 'aplica') v.repLegal = '';
+      if (v.repTrabEstado !== 'aplica') v.repTrab = '';
+      if (v.aplicaDC3 !== 'no') {
+        if (!v.rfcEmpresa) return { error: 'Para las DC-3 escriba el RFC de la empresa.' };
+        if (!RFC_VALIDO.test(v.rfcEmpresa)) return { error: 'El RFC «' + v.rfcEmpresa + '» no tiene el formato correcto (12 caracteres persona moral, 13 persona física).' };
+        if (v.repLegalEstado === 'aplica' && !v.repLegal) return { error: 'Escriba el nombre del representante legal o elija NO APLICA / NO CUENTA.' };
+        if (v.repTrabEstado === 'aplica' && !v.repTrab) return { error: 'Escriba el nombre del representante de los trabajadores o elija NO APLICA / NO CUENTA.' };
+      }
       let reasignar = false;
       if (cu && tieneFolios(cu) && prefijoFolio(Object.assign({}, cu, v)) !== prefijoFolio(cu)) {
         const n = cu.folioEmpresa ? 1 : (cu.participantes || []).filter(p => p.folio).length;
@@ -1437,7 +1472,20 @@
       }
       const g = await guardar('cursos', Object.assign({ participantes: [] }, pre || {}, cu || {}, v), cu ? 'Curso actualizado' : 'Curso creado');
       if (!cu) location.hash = '#/curso/' + g.id;
-    }, cu && !tieneFolios(cu) ? { borrar: async () => { await borrar('cursos', cu.id, 'Curso eliminado'); location.hash = '#/capacitaciones'; }, borrarPregunta: '¿Eliminar este curso y su lista de participantes?' } : null);
+    }, Object.assign({
+      alAbrir: () => {
+        const ver = (k, si) => { const el = $('#f_' + k); if (el) el.closest('.campo').hidden = !si; };
+        const ajustar = () => {
+          const dc3 = $('#f_aplicaDC3').value !== 'no';
+          ['rfcEmpresa', 'repLegalEstado', 'repTrabEstado'].forEach(k => ver(k, dc3));
+          ver('repLegal', dc3 && $('#f_repLegalEstado').value === 'aplica');
+          ver('repTrab', dc3 && $('#f_repTrabEstado').value === 'aplica');
+        };
+        ['aplicaDC3', 'repLegalEstado', 'repTrabEstado'].forEach(k => $('#f_' + k).addEventListener('change', ajustar));
+        $('#f_servicioId').addEventListener('change', e => { const s = servicio(e.target.value); if (s && !$('#f_rfcEmpresa').value) { const { c } = cadena(s); $('#f_rfcEmpresa').value = (c && c.rfc) || ''; } });
+        ajustar();
+      }
+    }, cu && !tieneFolios(cu) ? { borrar: async () => { await borrar('cursos', cu.id, 'Curso eliminado'); location.hash = '#/capacitaciones'; }, borrarPregunta: '¿Eliminar este curso y su lista de participantes?' } : {}));
   }
 
   /** Firma lista para imprimir: quita el fondo blanco o claro (queda transparente), recorta los márgenes vacíos
@@ -1639,10 +1687,17 @@
   function ordenClaude(cuId) {
     const cu = cursoPorId(cuId); const ins = instructorDe(cu.instructorId) || {};
     const ps = cu.participantes || [];
+    const falta = faltaDC3(cu);
+    if (falta.length) { toast('Para las DC-3 falta: ' + falta.join(', ') + '. Complételo en «Editar» del curso.', true); return; }
     const orden = {
       grupo: { curso: cu.curso, clave: claveCurso(cu), cliente: quienCurso(cu), empresa_razon_social: cu.empresa || '', modalidad: (cu.modalidad || '').toLowerCase(),
         fecha_inicio: cu.fechaInicio, fecha_fin: cu.fechaFin || cu.fechaInicio, fechas_texto: fechasCurso(cu), horas: String(cu.horas || ''), sede: cu.sede || '',
-        instructor: { titulo: ins.titulo || '', nombre: ins.nombre || '', cargo: ins.cargo || 'Capacitador', registros: ins.registros || [] } },
+        instructor: { titulo: ins.titulo || '', nombre: ins.nombre || '', cargo: ins.cargo || 'Capacitador', registros: ins.registros || [] },
+        dc3_empresa: aplicaDC3(cu) ? {
+          rfc: cu.rfcEmpresa || '',
+          representante_legal: nombreRep(cu, 'repLegal'), representante_legal_estado: TEXTO_REP[estadoRep(cu, 'repLegal')],
+          representante_trabajadores: nombreRep(cu, 'repTrab'), representante_trabajadores_estado: TEXTO_REP[estadoRep(cu, 'repTrab')]
+        } : null },
       participantes: ps.map(p => ({ nombres: p.nombres, apellido_paterno: p.apellidoPaterno, apellido_materno: p.apellidoMaterno || '', curp: p.curp || '', puesto: p.puesto || '', ocupacion_especifica: p.ocupacion || '', empresa_razon_social: p.empresa || cu.empresa || '', folio_participacion: p.folio || '' })),
       folios_asignados: ps.filter(p => p.folio).reduce((o, p) => { o[p.curp || nombreParticipante(p)] = p.folio; return o; }, {}),
       aplica_dc3: aplicaDC3(cu),
@@ -1652,7 +1707,9 @@
     };
     const texto = sel => 'ORDEN VIME CURSO ' + claveCurso(cu) + '\nGenera con la skill Aula Virtual Grupo VIME: ' + sel.join(', ') + '.\n' +
       'Las constancias de participación ya se emiten en Cerebro: NO generes folios nuevos; usa folios_asignados si te pido constancias.\n' +
-      (aplicaDC3(cu) ? 'Te adjunto la plantilla DC-3, el contenido del curso y la firma del capacitador.' : 'Este curso NO lleva DC-3. Te adjunto el contenido del curso.') + '\n\n```json\n' + JSON.stringify(orden, null, 1) + '\n```';
+      (aplicaDC3(cu) ? 'Te adjunto la plantilla DC-3, el contenido del curso y la firma del capacitador.\n' +
+        'En cada DC-3 usa grupo.dc3_empresa: el RFC de la empresa, el nombre del representante legal y el del representante de los trabajadores. ' +
+        'Si alguno de esos nombres viene vacío (su estado es NO APLICA o NO CUENTA con el dato), deja ese espacio EN BLANCO en la DC-3: no escribas «NO APLICA», guiones ni ningún otro texto.' : 'Este curso NO lleva DC-3. Te adjunto el contenido del curso.') + '\n\n```json\n' + JSON.stringify(orden, null, 1) + '\n```';
     const ops = (aplicaDC3(cu) ? ['DC-3 de cada participante (PDF)'] : []).concat(['Manual del Participante (Word)', 'Guía Visual (Word)', 'Póster o infografía (Word)']);
     abrirModal('Orden para Claude · ' + cu.curso, '<div class="form"><div class="campo ancho"><label>¿Qué necesita?</label>' + ops.map((o, k) => '<div class="campo check"><input type="checkbox" id="oc' + k + '"' + (k < 1 ? ' checked' : '') + '><label for="oc' + k + '">' + esc(o) + '</label></div>').join('') + '</div>' +
       '<div class="campo ancho"><label>Orden (cópiela y péguela en Claude)</label><textarea id="ocTexto" rows="12" readonly style="font-family:monospace;font-size:12px"></textarea>' +
