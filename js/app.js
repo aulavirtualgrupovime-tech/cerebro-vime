@@ -64,7 +64,7 @@
       const v = val[c.k] == null ? (c.def == null ? '' : c.def) : val[c.k];
       const id = 'f_' + c.k;
       let inp;
-      if (c.tipo === 'select') inp = '<select id="' + id + '" name="' + c.k + '">' + c.opciones.map(o => { const ov = typeof o === 'object' ? o.v : o, ot = typeof o === 'object' ? o.t : o; return '<option value="' + esc(ov) + '"' + (String(ov) === String(v) ? ' selected' : '') + '>' + esc(ot) + '</option>'; }).join('') + '</select>';
+      if (c.tipo === 'select') { const opt = o => { const ov = typeof o === 'object' ? o.v : o, ot = typeof o === 'object' ? o.t : o; return '<option value="' + esc(ov) + '"' + (String(ov) === String(v) ? ' selected' : '') + '>' + esc(ot) + '</option>'; }; inp = '<select id="' + id + '" name="' + c.k + '">' + c.opciones.map(o => o && o.grupo ? '<optgroup label="' + esc(o.grupo) + '">' + o.opciones.map(opt).join('') + '</optgroup>' : opt(o)).join('') + '</select>'; }
       else if (c.tipo === 'textarea') inp = '<textarea id="' + id + '" name="' + c.k + '" rows="' + (c.filas || 3) + '">' + esc(v) + '</textarea>';
       else if (c.tipo === 'check') return '<div class="campo check' + (c.ancho ? ' ancho' : '') + '"><input type="checkbox" id="' + id + '" name="' + c.k + '"' + (v ? ' checked' : '') + '><label for="' + id + '">' + esc(c.t) + '</label></div>';
       else {
@@ -1289,6 +1289,11 @@
   function registroDe(folio) { return (DB.constancias || []).find(x => x.folio === folio); }
   const aplicaDC3 = cu => cu.aplicaDC3 !== 'no';
   // Si un navegador aún tiene la página anterior en memoria, no debe romperse la vista del curso
+  const dc3Listo = () => typeof Dc3 !== 'undefined';
+  const textoOcup = v => dc3Listo() ? Dc3.textoOcupacion(v) : String(v || '');
+  const opcionesOcup = primera => dc3Listo() ? Dc3.opcionesOcupacion(primera) : [primera];
+  /** Ocupación con la que sale en la DC-3: la del participante o, si no tiene, la del curso. */
+  const ocupacionDe = (p, cu) => String(p.ocupacion || '').trim() || String(cu.ocupacionDefault || '').trim();
   const areasDC3 = () => (typeof Dc3 !== 'undefined' ? Dc3.AREAS : [['6000', 'Seguridad']]);
   // Representantes de la DC-3: «aplica» (con nombre), «no_aplica» o «no_cuenta» (en ambos casos queda en blanco en la DC-3)
   const ESTADOS_REP = [{ v: 'aplica', t: 'APLICA (escribir el nombre)' }, { v: 'no_aplica', t: 'NO APLICA' }, { v: 'no_cuenta', t: 'NO CUENTA con el dato' }];
@@ -1384,7 +1389,7 @@
       dato('Sede', esc(cu.sede || '—')) + dato('Capacitador', ins ? esc(((ins.titulo || '') + ' ' + ins.nombre).trim()) + ((ins.firmaData || ins.firmaDriveId) ? '' : ' <span class="etiqueta" style="background:var(--rojo)">sin firma</span>') : '<span style="color:var(--rojo)">Sin asignar</span>') +
       dato('Constancia de participación', emp ? 'Una para toda la empresa: «' + esc(textoEmpresa(cu)) + '»' : 'Una por participante') +
       dato('DC-3', dc3 ? '<b style="color:var(--verde)">APLICA</b>' : '<b style="color:var(--gris)">NO APLICA</b>') +
-      (dc3 ? dato('Área temática', esc(((areasDC3().find(a => a[0] === cu.areaTematica) || [])[0] || '—') + ' ' + ((areasDC3().find(a => a[0] === cu.areaTematica) || [])[1] || ''))) + dato('RFC de la empresa', cu.rfcEmpresa ? esc(cu.rfcEmpresa) + (RFC_VALIDO.test(cu.rfcEmpresa) ? '' : ' <span class="etiqueta" style="background:var(--rojo)">revisar</span>') : '<span style="color:var(--rojo)">Falta</span>') +
+      (dc3 ? dato('Área temática', esc(((areasDC3().find(a => a[0] === cu.areaTematica) || [])[0] || '—') + ' ' + ((areasDC3().find(a => a[0] === cu.areaTematica) || [])[1] || ''))) + dato('Ocupación predeterminada', cu.ocupacionDefault ? esc(textoOcup(cu.ocupacionDefault)) : '<span class="sub">Ninguna (cada participante con la suya)</span>') + dato('RFC de la empresa', cu.rfcEmpresa ? esc(cu.rfcEmpresa) + (RFC_VALIDO.test(cu.rfcEmpresa) ? '' : ' <span class="etiqueta" style="background:var(--rojo)">revisar</span>') : '<span style="color:var(--rojo)">Falta</span>') +
         dato('Representante legal', textoRep(cu, 'repLegal')) + dato('Representante de los trabajadores', textoRep(cu, 'repTrab')) : '') +
       dato('Folios', esc(prefijoFolio(cu)) + (emp ? '-NNN (uno para la empresa)' : '-001, -002…')) + '</div>' +
       (faltaDC3(cu).length ? '<div class="aviso-it rojo" style="margin-top:12px;cursor:default"><div><b>Faltan datos para emitir las DC-3</b><span>Complete en «Editar»: ' + esc(faltaDC3(cu).join(', ')) + '.</span></div></div>' : '') + '</div>' +
@@ -1439,6 +1444,7 @@
       { k: 'empresa', t: 'Razón social de la empresa', ancho: true, ayuda: 'Se usa en la DC-3 y en la constancia para toda la empresa.' },
       { k: 'aplicaDC3', t: 'DC-3', tipo: 'select', opciones: [{ v: 'si', t: 'APLICA' }, { v: 'no', t: 'NO APLICA (solo constancia de participación)' }] },
       { k: 'areaTematica', t: 'Área temática del curso (DC-3)', tipo: 'select', opciones: areasDC3().map(([c, n]) => ({ v: c, t: c + ' · ' + n })) },
+      { k: 'ocupacionDefault', t: 'Ocupación específica predeterminada (DC-3)', tipo: 'select', opciones: opcionesOcup({ v: '', t: 'Elija… (cada participante puede tener la suya)' }), ayuda: 'Catálogo Nacional de Ocupaciones. Se usa para los participantes que no tengan una propia.' },
       { k: 'rfcEmpresa', t: 'RFC de la empresa (DC-3)', ayuda: 'Obligatorio para emitir las DC-3. Si eligió un cliente, se toma su RFC.' },
       { k: 'repLegalEstado', t: 'Representante legal (DC-3)', tipo: 'select', opciones: ESTADOS_REP, ayuda: 'NO APLICA o NO CUENTA: el espacio queda en blanco en la DC-3.' },
       { k: 'repLegal', t: 'Nombre del representante legal' },
@@ -1489,7 +1495,7 @@
         const ver = (k, si) => { const el = $('#f_' + k); if (el) el.closest('.campo').hidden = !si; };
         const ajustar = () => {
           const dc3 = $('#f_aplicaDC3').value !== 'no';
-          ['areaTematica', 'rfcEmpresa', 'repLegalEstado', 'repTrabEstado'].forEach(k => ver(k, dc3));
+          ['areaTematica', 'ocupacionDefault', 'rfcEmpresa', 'repLegalEstado', 'repTrabEstado'].forEach(k => ver(k, dc3));
           ver('repLegal', dc3 && $('#f_repLegalEstado').value === 'aplica');
           ver('repTrab', dc3 && $('#f_repTrabEstado').value === 'aplica');
         };
@@ -1559,11 +1565,12 @@
 
   const CAMPOS_PART = [
     { k: 'nombres', t: 'Nombre(s)', req: true }, { k: 'apellidoPaterno', t: 'Apellido paterno', req: true }, { k: 'apellidoMaterno', t: 'Apellido materno' },
-    { k: 'curp', t: 'CURP', ayuda: 'Obligatoria solo para la DC-3.' }, { k: 'puesto', t: 'Puesto' }, { k: 'ocupacion', t: 'Ocupación específica (DC-3)' }
+    { k: 'curp', t: 'CURP', ayuda: 'Obligatoria solo para la DC-3.' }, { k: 'puesto', t: 'Puesto' }, { k: 'ocupacion', t: 'Ocupación específica (DC-3)', tipo: 'select', ancho: true, opciones: [], ayuda: 'Catálogo Nacional de Ocupaciones. Déjela en «la del curso» si es la misma para todos.' }
   ];
   function formParticipante(cuId, k) {
     const cu = cursoPorId(cuId); const p = k == null ? null : cu.participantes[k];
-    formulario(p ? 'Editar participante' : 'Agregar participante', CAMPOS_PART, p || {}, async v => {
+    const campos = CAMPOS_PART.map(c => c.k !== 'ocupacion' ? c : Object.assign({}, c, { opciones: opcionesOcup({ v: '', t: cu.ocupacionDefault ? 'La del curso: ' + textoOcup(cu.ocupacionDefault) : 'Sin elegir (use la del curso o elija una)' }).concat(p && p.ocupacion && textoOcup(p.ocupacion) === p.ocupacion ? [{ v: p.ocupacion, t: p.ocupacion + ' (escrita antes)' }] : []) }));
+    formulario(p ? 'Editar participante' : 'Agregar participante', campos, p || {}, async v => {
       v.curp = String(v.curp || '').toUpperCase().replace(/\s+/g, '');
       const e = Constancias.validarCURP(v.curp); if (e) return { error: e + '. Corríjala o déjela vacía.' };
       const lista = (cu.participantes || []).slice();
@@ -1675,6 +1682,8 @@
     if (!ins) faltas.push('asignar un capacitador'); else if (!(ins.firmaData || ins.firmaDriveId)) faltas.push('firma digital del capacitador');
     if (!cu.areaTematica) faltas.push('área temática del curso (Editar)');
     const malos = ps.filter(p => problemas(p, todos, true).length);
+    const sinOcup = ps.filter(p => !ocupacionDe(p, cu));
+    if (sinOcup.length) faltas.push('ocupación específica de ' + sinOcup.length + ' participante(s): elija la predeterminada del curso (Editar) o la de cada uno');
     if (malos.length) faltas.push(malos.length + ' participante(s) con CURP o nombre por corregir (' + malos.slice(0, 3).map(nombreParticipante).join(', ') + (malos.length > 3 ? '…' : '') + ')');
     if (!ps.length) faltas.push('lista de participantes');
     return { ps, faltas };
@@ -1691,7 +1700,7 @@
     const lg = inm ? logosDe(inm) : { izq: 'gv', der: '' };
     return Dc3.generar({
       curso: { curso: cu.curso, horas: cu.horas, fechaInicio: cu.fechaInicio, fechaFin: cu.fechaFin || cu.fechaInicio, areaTematica: cu.areaTematica },
-      participantes: L.ps, instructor: { nombre: ins.nombre, firma },
+      participantes: L.ps.map(p => Object.assign({}, p, { ocupacion: ocupacionDe(p, cu) })), instructor: { nombre: ins.nombre, firma },
       empresa: { razonSocial: cu.empresa || '', rfc: cu.rfcEmpresa || '', representanteLegal: nombreRep(cu, 'repLegal'), representanteTrabajadores: nombreRep(cu, 'repTrab') },
       logos: { izq: await bytesLogo(lg.izq), der: await bytesLogo(lg.der) }
     });
