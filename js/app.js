@@ -1141,6 +1141,8 @@
     bajarLote: () => { if (ultimoLote) descargar(new Blob([ultimoLote.res.lote], { type: 'application/pdf' }), ultimoLote.nombreLote); },
     bajarZip: async () => { if (!ultimoLote) return; try { descargar(await Constancias.zip(ultimoLote.res, ultimoLote.nombreLote), ultimoLote.nombreZip); } catch (e) { toast(e.message, true); } },
     loteDrive: () => loteDrive(),
+    generarDC3: el => generarDC3(el.dataset.id),
+    verDC3: el => verDC3(el.dataset.id),
     ordenClaude: el => ordenClaude(el.dataset.id),
     cancelarConst: el => estadoConstancia(el.dataset.id, true),
     reactivarConst: el => estadoConstancia(el.dataset.id, false),
@@ -1286,6 +1288,8 @@
   function fechasCurso(cu) { return cu.fechasTexto || textoFechasCurso(cu.fechaInicio, cu.fechaFin); }
   function registroDe(folio) { return (DB.constancias || []).find(x => x.folio === folio); }
   const aplicaDC3 = cu => cu.aplicaDC3 !== 'no';
+  // Si un navegador aún tiene la página anterior en memoria, no debe romperse la vista del curso
+  const areasDC3 = () => (typeof Dc3 !== 'undefined' ? Dc3.AREAS : [['6000', 'Seguridad']]);
   // Representantes de la DC-3: «aplica» (con nombre), «no_aplica» o «no_cuenta» (en ambos casos queda en blanco en la DC-3)
   const ESTADOS_REP = [{ v: 'aplica', t: 'APLICA (escribir el nombre)' }, { v: 'no_aplica', t: 'NO APLICA' }, { v: 'no_cuenta', t: 'NO CUENTA con el dato' }];
   const TEXTO_REP = { aplica: 'APLICA', no_aplica: 'NO APLICA', no_cuenta: 'NO CUENTA con el dato' };
@@ -1380,7 +1384,7 @@
       dato('Sede', esc(cu.sede || '—')) + dato('Capacitador', ins ? esc(((ins.titulo || '') + ' ' + ins.nombre).trim()) + ((ins.firmaData || ins.firmaDriveId) ? '' : ' <span class="etiqueta" style="background:var(--rojo)">sin firma</span>') : '<span style="color:var(--rojo)">Sin asignar</span>') +
       dato('Constancia de participación', emp ? 'Una para toda la empresa: «' + esc(textoEmpresa(cu)) + '»' : 'Una por participante') +
       dato('DC-3', dc3 ? '<b style="color:var(--verde)">APLICA</b>' : '<b style="color:var(--gris)">NO APLICA</b>') +
-      (dc3 ? dato('RFC de la empresa', cu.rfcEmpresa ? esc(cu.rfcEmpresa) + (RFC_VALIDO.test(cu.rfcEmpresa) ? '' : ' <span class="etiqueta" style="background:var(--rojo)">revisar</span>') : '<span style="color:var(--rojo)">Falta</span>') +
+      (dc3 ? dato('Área temática', esc(((areasDC3().find(a => a[0] === cu.areaTematica) || [])[0] || '—') + ' ' + ((areasDC3().find(a => a[0] === cu.areaTematica) || [])[1] || ''))) + dato('RFC de la empresa', cu.rfcEmpresa ? esc(cu.rfcEmpresa) + (RFC_VALIDO.test(cu.rfcEmpresa) ? '' : ' <span class="etiqueta" style="background:var(--rojo)">revisar</span>') : '<span style="color:var(--rojo)">Falta</span>') +
         dato('Representante legal', textoRep(cu, 'repLegal')) + dato('Representante de los trabajadores', textoRep(cu, 'repTrab')) : '') +
       dato('Folios', esc(prefijoFolio(cu)) + (emp ? '-NNN (uno para la empresa)' : '-001, -002…')) + '</div>' +
       (faltaDC3(cu).length ? '<div class="aviso-it rojo" style="margin-top:12px;cursor:default"><div><b>Faltan datos para emitir las DC-3</b><span>Complete en «Editar»: ' + esc(faltaDC3(cu).join(', ')) + '.</span></div></div>' : '') + '</div>' +
@@ -1404,14 +1408,21 @@
           (pend.length ? '<button class="btn chico" data-acc="emitirCurso" data-id="' + cu.id + '">Asignar ' + pend.length + ' folio' + (pend.length === 1 ? '' : 's') + '</button>' : '') + '</div>') +
       '<div class="etapa' + (cu.generadas ? ' hecha' : '') + '"><span class="txt">3. ' + (emp ? 'Constancia de la empresa en PDF' : 'Constancias en PDF (lote para imprimir + una por participante)') + (cu.generadas ? ' <span class="sub">· última vez ' + esc(fechaCorta(String(cu.generadas).slice(0, 10))) + '</span>' : '') + '</span>' +
       ((emp ? cu.folioEmpresa : emitidas.length) ? '<span style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn sec chico" data-acc="verConstancias" data-id="' + cu.id + '">👁 Ver constancias emitidas</button>' + '<button class="btn acento chico" data-acc="generarConstancias" data-id="' + cu.id + '">⬇ Generar PDF</button>' + '</span>' : '') + '</div>' +
-      '<p class="sub" style="margin-top:10px">El PDF se arma en este equipo con el diseño oficial (logos de Aula Virtual y Grupo VIME, un capacitador, folio y QR). Los folios nunca se repiten: los asigna el servidor.</p></div>' +
-      '<div class="tarjeta"><div class="tarjeta-cab"><h3>' + (dc3 ? 'DC-3 y material didáctico' : 'Material didáctico <span class="sub">(este curso no lleva DC-3)</span>') + '</h3><button class="btn sec" data-acc="ordenClaude" data-id="' + cu.id + '">🤖 Orden para Claude</button></div>' +
-      '<p class="sub">' + (dc3 ? 'Las DC-3 (formato STPS en Word) y el' : 'El') + ' material didáctico (Manual del Participante, Guía Visual y póster) ' + (dc3 ? 'los genera' : 'lo genera') + ' la skill «Aula Virtual Grupo VIME» en Claude. Este botón arma la orden con los datos del curso, el capacitador, la lista y los folios para que solo la pegue en el chat junto con el contenido del curso y la firma.</p></div>';
+      (dc3 ? (() => {
+        const L = listaDC3(cu);
+        return '<div class="etapa' + (cu.dc3Generadas ? ' hecha' : '') + '"><span class="txt">4. DC-3 en PDF (formato STPS, sin QR) · ' + L.ps.length + ' participante' + (L.ps.length === 1 ? '' : 's') +
+          (cu.dc3Generadas ? ' <span class="sub">· última vez ' + esc(fechaCorta(String(cu.dc3Generadas).slice(0, 10))) + '</span>' : '') +
+          (L.faltas.length ? '<div class="sub" style="color:var(--rojo)">Falta: ' + esc(L.faltas.join('; ')) + '</div>' : '') + '</span>' +
+          (!L.faltas.length && L.ps.length ? '<span style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn sec chico" data-acc="verDC3" data-id="' + cu.id + '">👁 Ver DC-3</button><button class="btn acento chico" data-acc="generarDC3" data-id="' + cu.id + '">⬇ Generar DC-3</button></span>' : '') + '</div>';
+      })() : '') +
+      '<p class="sub" style="margin-top:10px">Los PDF se arman en este equipo. Constancias de participación: diseño oficial con folio y QR (los folios los asigna el servidor y nunca se repiten). ' + (dc3 ? 'DC-3: formato de la STPS con los logotipos del asesor y del cliente, sin QR.' : '') + '</p></div>' +
+      '<div class="tarjeta"><div class="tarjeta-cab"><h3>' + 'Material didáctico' + '</h3><button class="btn sec" data-acc="ordenClaude" data-id="' + cu.id + '">🤖 Orden para Claude</button></div>' +
+      '<p class="sub">El material didáctico (Manual del Participante, Guía Visual y póster) lo genera la skill «Aula Virtual Grupo VIME» en Claude. Este botón arma la orden con los datos del curso, el capacitador, la lista y los folios para que solo la pegue en el chat junto con el contenido del curso. Las DC-3 ya se emiten aquí, en «Constancias de participación».</p></div>';
   }
 
   function formCurso(cu, pre) {
     const servs = DB.servicios.filter(s => s.tipo === 'CAPACITACIONES' && !s.archivado);
-    const val = Object.assign({ modalidad: 'Presencial', instructorId: (instructores()[0] || {}).id || '', tipoConstancia: 'individual', aplicaDC3: 'si', leyendaEmpresa: 'El personal brigadista de', repLegalEstado: 'aplica', repTrabEstado: 'aplica' }, pre || {}, cu || {});
+    const val = Object.assign({ modalidad: 'Presencial', instructorId: (instructores()[0] || {}).id || '', tipoConstancia: 'individual', aplicaDC3: 'si', leyendaEmpresa: 'El personal brigadista de', repLegalEstado: 'aplica', repTrabEstado: 'aplica', areaTematica: '6000' }, pre || {}, cu || {});
     if (!val.rfcEmpresa && val.servicioId) { const { c } = cadena(servicio(val.servicioId) || {}); val.rfcEmpresa = (c && c.rfc) || ''; }
     const campos = [
       { k: 'curso', t: 'Nombre del curso', req: true, ancho: true },
@@ -1427,6 +1438,7 @@
       { k: 'servicioId', t: 'Cliente (servicio de capacitaciones)', tipo: 'select', opciones: [{ v: '', t: 'Grupo abierto / sin cliente' }].concat(servs.map(s => { const { i, c } = cadena(s); return { v: s.id, t: nombreCli(c) + ' · ' + (i.nombreComercial || '') + ' · ' + s.ejercicio }; })) },
       { k: 'empresa', t: 'Razón social de la empresa', ancho: true, ayuda: 'Se usa en la DC-3 y en la constancia para toda la empresa.' },
       { k: 'aplicaDC3', t: 'DC-3', tipo: 'select', opciones: [{ v: 'si', t: 'APLICA' }, { v: 'no', t: 'NO APLICA (solo constancia de participación)' }] },
+      { k: 'areaTematica', t: 'Área temática del curso (DC-3)', tipo: 'select', opciones: areasDC3().map(([c, n]) => ({ v: c, t: c + ' · ' + n })) },
       { k: 'rfcEmpresa', t: 'RFC de la empresa (DC-3)', ayuda: 'Obligatorio para emitir las DC-3. Si eligió un cliente, se toma su RFC.' },
       { k: 'repLegalEstado', t: 'Representante legal (DC-3)', tipo: 'select', opciones: ESTADOS_REP, ayuda: 'NO APLICA o NO CUENTA: el espacio queda en blanco en la DC-3.' },
       { k: 'repLegal', t: 'Nombre del representante legal' },
@@ -1477,7 +1489,7 @@
         const ver = (k, si) => { const el = $('#f_' + k); if (el) el.closest('.campo').hidden = !si; };
         const ajustar = () => {
           const dc3 = $('#f_aplicaDC3').value !== 'no';
-          ['rfcEmpresa', 'repLegalEstado', 'repTrabEstado'].forEach(k => ver(k, dc3));
+          ['areaTematica', 'rfcEmpresa', 'repLegalEstado', 'repTrabEstado'].forEach(k => ver(k, dc3));
           ver('repLegal', dc3 && $('#f_repLegalEstado').value === 'aplica');
           ver('repTrab', dc3 && $('#f_repTrabEstado').value === 'aplica');
         };
@@ -1653,6 +1665,59 @@
     return { bytes: new Uint8Array(await limpia.arrayBuffer()), tipo: 'image/png' };
   }
   let ultimoLote = null;
+
+  /* ---------- DC-3 en PDF (mismas opciones que las constancias, sin QR) ---------- */
+  function listaDC3(cu) {
+    const todos = cu.participantes || [];
+    const ps = todos.filter(p => !p.excluir);
+    const faltas = faltaDC3(cu).slice();
+    const ins = instructorDe(cu.instructorId);
+    if (!ins) faltas.push('asignar un capacitador'); else if (!(ins.firmaData || ins.firmaDriveId)) faltas.push('firma digital del capacitador');
+    if (!cu.areaTematica) faltas.push('área temática del curso (Editar)');
+    const malos = ps.filter(p => problemas(p, todos, true).length);
+    if (malos.length) faltas.push(malos.length + ' participante(s) con CURP o nombre por corregir (' + malos.slice(0, 3).map(nombreParticipante).join(', ') + (malos.length > 3 ? '…' : '') + ')');
+    if (!ps.length) faltas.push('lista de participantes');
+    return { ps, faltas };
+  }
+  async function bytesLogo(v) {
+    try { const src = await Docs.logoSrc(DB, v); if (!src) return null; const b = await (await fetch(src)).blob(); return { bytes: new Uint8Array(await b.arrayBuffer()), tipo: b.type || 'image/png' }; }
+    catch (e) { return null; }
+  }
+  async function armarDC3(cu) {
+    const L = listaDC3(cu); if (L.faltas.length) throw new Error('Para las DC-3 falta: ' + L.faltas.join('; ') + '.');
+    const ins = instructorDe(cu.instructorId);
+    const firma = await bytesFirma(ins);
+    const s = cu.servicioId ? servicio(cu.servicioId) : null; const inm = s ? cadena(s).i : null;
+    const lg = inm ? logosDe(inm) : { izq: 'gv', der: '' };
+    return Dc3.generar({
+      curso: { curso: cu.curso, horas: cu.horas, fechaInicio: cu.fechaInicio, fechaFin: cu.fechaFin || cu.fechaInicio, areaTematica: cu.areaTematica },
+      participantes: L.ps, instructor: { nombre: ins.nombre, firma },
+      empresa: { razonSocial: cu.empresa || '', rfc: cu.rfcEmpresa || '', representanteLegal: nombreRep(cu, 'repLegal'), representanteTrabajadores: nombreRep(cu, 'repTrab') },
+      logos: { izq: await bytesLogo(lg.izq), der: await bytesLogo(lg.der) }
+    });
+  }
+  async function generarDC3(cuId) {
+    const cu = cursoPorId(cuId); const n = listaDC3(cu).ps.length;
+    abrirModal('DC-3 · ' + cu.curso, '<div class="vacio">Armando ' + n + ' DC-3…</div>');
+    try {
+      const res = await armarDC3(cu);
+      const clave = prefijoFolio(cu).replace(/[^A-Z0-9-]+/g, '');
+      ultimoLote = { cuId, res, tipo: 'dc3', nombreLote: 'LOTE_DC3_' + clave + '.pdf', nombreZip: 'DC3_' + clave + '.zip' };
+      await Datos.guardar('cursos', Object.assign({}, cu, { dc3Generadas: new Date().toISOString() })); DB = Datos.vista();
+      $('#modalCuerpo').innerHTML = '<p>Listas <b>' + n + '</b> DC-3.</p>' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0"><button class="btn" data-acc="bajarLote">⬇ Lote para imprimir (un PDF)</button><button class="btn sec" data-acc="bajarZip">⬇ ZIP: lote + una por participante</button>' +
+        (cu.servicioId ? '<button class="btn sec" data-acc="loteDrive">☁ Guardar lote en Documentos del servicio</button>' : '') + '</div>' +
+        '<p class="sub">Imprima en tamaño carta «ajustar a la página». Recuerde recabar la firma del patrón o representante legal (y del representante de los trabajadores, si aplica).</p>';
+    } catch (e) { $('#modalCuerpo').innerHTML = '<div class="error-form">' + esc(e.message) + '</div>'; }
+  }
+  function verDC3(cuId) {
+    const cu = cursoPorId(cuId); const n = listaDC3(cu).ps.length;
+    verArchivo({
+      nombre: 'DC3_' + prefijoFolio(cu).replace(/[^A-Z0-9-]+/g, '') + '.pdf', sub: cu.curso + ' · ' + n + ' DC-3',
+      cargando: 'Armando ' + n + ' DC-3…',
+      obtener: async () => new Blob([(await armarDC3(cu)).lote], { type: 'application/pdf' })
+    });
+  }
   async function generarConstancias(cuId) {
     const cu = cursoPorId(cuId); const ins = instructorDe(cu.instructorId);
     if (!ins) { toast('Asigne un capacitador al curso.', true); return; }
@@ -1678,7 +1743,7 @@
     try {
       sinc('Subiendo…');
       const f = new File([L.res.lote], L.nombreLote, { type: 'application/pdf' });
-      const r = await Datos.subirArchivo(f, [nombreCli(c), i.nombreComercial, String(s.ejercicio), TIPOS[s.tipo].corto, 'Constancias']);
+      const r = await Datos.subirArchivo(f, [nombreCli(c), i.nombreComercial, String(s.ejercicio), TIPOS[s.tipo].corto, L.tipo === 'dc3' ? 'DC-3' : 'Constancias']);
       await Datos.guardar('documentos', { nombre: r.nombre, url: r.url, driveId: r.driveId || '', servicioId: s.id, eventoId: cu.eventoId || '', autor: Datos.usuario().nombre, fecha: hoyISO(), categoria: 'constancias' });
       sinc(''); refrescarDB(); toast('Lote guardado en Documentos del servicio');
     } catch (e) { sinc(''); toast(e.message, true); }
@@ -1687,33 +1752,23 @@
   function ordenClaude(cuId) {
     const cu = cursoPorId(cuId); const ins = instructorDe(cu.instructorId) || {};
     const ps = cu.participantes || [];
-    const falta = faltaDC3(cu);
-    if (falta.length) { toast('Para las DC-3 falta: ' + falta.join(', ') + '. Complételo en «Editar» del curso.', true); return; }
     const orden = {
       grupo: { curso: cu.curso, clave: claveCurso(cu), cliente: quienCurso(cu), empresa_razon_social: cu.empresa || '', modalidad: (cu.modalidad || '').toLowerCase(),
         fecha_inicio: cu.fechaInicio, fecha_fin: cu.fechaFin || cu.fechaInicio, fechas_texto: fechasCurso(cu), horas: String(cu.horas || ''), sede: cu.sede || '',
-        instructor: { titulo: ins.titulo || '', nombre: ins.nombre || '', cargo: ins.cargo || 'Capacitador', registros: ins.registros || [] },
-        dc3_empresa: aplicaDC3(cu) ? {
-          rfc: cu.rfcEmpresa || '',
-          representante_legal: nombreRep(cu, 'repLegal'), representante_legal_estado: TEXTO_REP[estadoRep(cu, 'repLegal')],
-          representante_trabajadores: nombreRep(cu, 'repTrab'), representante_trabajadores_estado: TEXTO_REP[estadoRep(cu, 'repTrab')]
-        } : null },
+        instructor: { titulo: ins.titulo || '', nombre: ins.nombre || '', cargo: ins.cargo || 'Capacitador', registros: ins.registros || [] } },
       participantes: ps.map(p => ({ nombres: p.nombres, apellido_paterno: p.apellidoPaterno, apellido_materno: p.apellidoMaterno || '', curp: p.curp || '', puesto: p.puesto || '', ocupacion_especifica: p.ocupacion || '', empresa_razon_social: p.empresa || cu.empresa || '', folio_participacion: p.folio || '' })),
       folios_asignados: ps.filter(p => p.folio).reduce((o, p) => { o[p.curp || nombreParticipante(p)] = p.folio; return o; }, {}),
-      aplica_dc3: aplicaDC3(cu),
       tipo_constancia: esEmpresa(cu) ? 'empresa' : 'individual',
       constancia_empresa: esEmpresa(cu) ? { texto: textoEmpresa(cu), folio: cu.folioEmpresa || '' } : null,
       origen: 'Cerebro Grupo VIME · ' + hoyISO()
     };
     const texto = sel => 'ORDEN VIME CURSO ' + claveCurso(cu) + '\nGenera con la skill Aula Virtual Grupo VIME: ' + sel.join(', ') + '.\n' +
       'Las constancias de participación ya se emiten en Cerebro: NO generes folios nuevos; usa folios_asignados si te pido constancias.\n' +
-      (aplicaDC3(cu) ? 'Te adjunto la plantilla DC-3, el contenido del curso y la firma del capacitador.\n' +
-        'En cada DC-3 usa grupo.dc3_empresa: el RFC de la empresa, el nombre del representante legal y el del representante de los trabajadores. ' +
-        'Si alguno de esos nombres viene vacío (su estado es NO APLICA o NO CUENTA con el dato), deja ese espacio EN BLANCO en la DC-3: no escribas «NO APLICA», guiones ni ningún otro texto.' : 'Este curso NO lleva DC-3. Te adjunto el contenido del curso.') + '\n\n```json\n' + JSON.stringify(orden, null, 1) + '\n```';
-    const ops = (aplicaDC3(cu) ? ['DC-3 de cada participante (PDF)'] : []).concat(['Manual del Participante (Word)', 'Guía Visual (Word)', 'Póster o infografía (Word)']);
+      'Las DC-3 también se emiten en Cerebro: NO generes DC-3. Te adjunto el contenido del curso.' + '\n\n```json\n' + JSON.stringify(orden, null, 1) + '\n```';
+    const ops = ['Manual del Participante (Word)', 'Guía Visual (Word)', 'Póster o infografía (Word)'];
     abrirModal('Orden para Claude · ' + cu.curso, '<div class="form"><div class="campo ancho"><label>¿Qué necesita?</label>' + ops.map((o, k) => '<div class="campo check"><input type="checkbox" id="oc' + k + '"' + (k < 1 ? ' checked' : '') + '><label for="oc' + k + '">' + esc(o) + '</label></div>').join('') + '</div>' +
       '<div class="campo ancho"><label>Orden (cópiela y péguela en Claude)</label><textarea id="ocTexto" rows="12" readonly style="font-family:monospace;font-size:12px"></textarea>' +
-      '<span class="ayuda">' + (aplicaDC3(cu) ? 'Para las DC-3 verifique que todas las CURP estén correctas y la razón social de la empresa. Adjunte en el chat la plantilla DC-3 de Word, el documento de contenido del curso (para el material) y la firma.' : 'Este curso no lleva DC-3. Adjunte en el chat el documento de contenido del curso.') + '</span></div>' +
+      '<span class="ayuda">' + 'Adjunte en el chat el documento de contenido del curso. Las DC-3 se emiten en Cerebro, en «Constancias de participación».' + '</span></div>' +
       '<div class="form-pie"><button type="button" class="btn sec" data-acc="cerrarModal">Cerrar</button><button type="button" class="btn" id="ocCopiar">Copiar orden</button></div></div>');
     document.querySelector('.modal').classList.add('ancha');
     const act = () => { $('#ocTexto').value = texto(ops.filter((o, k) => $('#oc' + k).checked)); };
