@@ -1289,7 +1289,7 @@
   function registroDe(folio) { return (DB.constancias || []).find(x => x.folio === folio); }
   const aplicaDC3 = cu => cu.aplicaDC3 !== 'no';
   // Si un navegador aún tiene la página anterior en memoria, no debe romperse la vista del curso
-  const dc3Listo = () => typeof Dc3 !== 'undefined';
+  const dc3Listo = () => typeof Dc3 !== 'undefined' && typeof Dc3.textoOcupacion === 'function';
   const textoOcup = v => dc3Listo() ? Dc3.textoOcupacion(v) : String(v || '');
   const opcionesOcup = primera => dc3Listo() ? Dc3.opcionesOcupacion(primera) : [primera];
   /** Ocupación con la que sale en la DC-3: la del participante o, si no tiene, la del curso. */
