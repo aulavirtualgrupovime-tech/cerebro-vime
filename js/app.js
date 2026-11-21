@@ -93,17 +93,22 @@
       (opciones.extraPie || '') +
       '<button type="button" class="btn sec" data-acc="cerrarModal">Cancelar</button><button class="btn" type="submit">Guardar</button></div></form>');
     if (opciones.alAbrir) opciones.alAbrir();
+    let enviando = false;
     $('#formModal').addEventListener('submit', async e => {
       e.preventDefault();
+      if (enviando) return; // evita registros repetidos por doble clic mientras responde el servidor
       const datos = leerCampos(campos);
       const falta = campos.filter(c => c.req && (datos[c.k] === '' || datos[c.k] == null)).map(c => c.t);
       const err = $('#errForm');
       if (falta.length) { err.textContent = 'Falta: ' + falta.join(', ') + '.'; err.hidden = false; return; }
+      const btn = e.submitter || $('#formModal button[type=submit]'); const texto = btn ? btn.textContent : '';
+      enviando = true; if (btn) { btn.disabled = true; btn.textContent = 'Guardando…'; }
       try {
         const r = await alGuardar(datos);
         if (r && r.error) { err.textContent = r.error; err.hidden = false; return; }
         cerrarModal();
       } catch (ex) { err.textContent = ex.message; err.hidden = false; }
+      finally { enviando = false; if (btn && btn.isConnected) { btn.disabled = false; btn.textContent = texto; } }
     });
     if (opciones.borrar) $('#btnBorrar').addEventListener('click', async () => {
       if (!confirm(opciones.borrarPregunta || '¿Eliminar este registro? No se puede deshacer.')) return;
@@ -118,11 +123,43 @@
     { k: 'rfc', t: 'RFC' },
     { k: 'notas', t: 'Notas', tipo: 'textarea', ancho: true }
   ];
+  /** Clave para reconocer el mismo cliente aunque se escriba distinto («Hotelera X, S.A. de C.V.» = «HOTELERA X SA DE CV»). */
+  function claveRazon(t) {
+    const quitar = new Set(['s', 'a', 'de', 'c', 'v', 'sa', 'cv', 'r', 'l', 'rl', 'srl', 'ac', 'sc', 'sapi', 'sab', 'spr', 'sas', 'y']);
+    return String(t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9ñ ]+/g, ' ').split(/\s+/).filter(w => w && !quitar.has(w)).join('');
+  }
+  /** Otros clientes que parecen ser el mismo (mismo RFC o misma razón social). */
+  function duplicadosDe(c, lista) {
+    const rfc = String(c.rfc || '').toUpperCase().trim(), cr = claveRazon(c.razonSocial);
+    return (lista || DB.clientes).filter(o => o.id !== c.id && ((rfc && String(o.rfc || '').toUpperCase().trim() === rfc) || (cr && claveRazon(o.razonSocial) === cr)));
+  }
+  /** Grupos de clientes repetidos (cada grupo con 2 o más registros). */
+  function gruposRepetidos() {
+    const vistos = new Set(), grupos = [];
+    DB.clientes.forEach(c => { if (vistos.has(c.id)) return; const d = duplicadosDe(c); if (d.length) { const g = [c].concat(d); g.forEach(x => vistos.add(x.id)); grupos.push(g); } });
+    return grupos;
+  }
+  async function unirClientes(destinoId, origenId) {
+    const dest = porId('clientes', destinoId), org = porId('clientes', origenId); if (!dest || !org) return;
+    const inms = DB.inmuebles.filter(i => i.clienteId === origenId);
+    if (!confirm('¿Unir «' + nombreCli(org) + '» dentro de «' + nombreCli(dest) + '»?\n\nSus ' + inms.length + ' establecimiento(s), con sus servicios, documentos y pagos, pasarán a «' + nombreCli(dest) + '» y el registro repetido se eliminará.')) return;
+    try {
+      sinc('Uniendo…');
+      for (const i of inms) await Datos.guardar('inmuebles', Object.assign({}, i, { clienteId: destinoId }));
+      const completar = {};
+      ['razonSocial', 'nombreComercial', 'rfc', 'notas'].forEach(k => { if (!dest[k] && org[k]) completar[k] = org[k]; });
+      if (Object.keys(completar).length) await Datos.guardar('clientes', Object.assign({}, dest, completar));
+      await Datos.borrar('clientes', origenId);
+      sinc(''); refrescarDB(); toast('Clientes unidos: ' + inms.length + ' establecimiento(s) movido(s)');
+    } catch (e) { sinc(''); toast(e.message, true); refrescarDB(); }
+  }
   function formCliente(c) {
     formulario(c ? 'Editar cliente' : 'Nuevo cliente', CAMPOS_CLIENTE, c, async d => {
-      d.rfc = (d.rfc || '').toUpperCase();
+      d.rfc = (d.rfc || '').toUpperCase().replace(/[\s-]/g, '');
+      const dup = duplicadosDe(Object.assign({}, c || {}, d));
+      if (dup.length) return { error: 'Ya existe el cliente «' + nombreCli(dup[0]) + '»' + (dup[0].rfc ? ' (RFC ' + dup[0].rfc + ')' : '') + '. No se puede registrar dos veces: ábralo en Clientes y agréguele ahí sus establecimientos.' };
       const g = await guardar('clientes', Object.assign({}, c || {}, d), 'Cliente guardado');
-      if (!c) location.hash = '#/cliente/' + g.id;
+      if (!c) { location.hash = '#/cliente/' + g.id; setTimeout(() => formInmueble(null, g.id), 350); }
     }, c ? {
       borrar: async () => {
         if (DB.inmuebles.some(i => i.clienteId === c.id)) { toast('Primero elimine los inmuebles de este cliente.', true); return; }
@@ -144,11 +181,17 @@
   ];
   function formInmueble(inm, clienteId) {
     const sel = { izq: inm && inm.logoIzq !== undefined ? inm.logoIzq : 'gv', der: inm && inm.logoDer !== undefined ? inm.logoDer : '' };
-    formulario(inm ? 'Editar inmueble' : 'Nuevo inmueble o establecimiento', CAMPOS_INMUEBLE, inm || { riesgo: 'ordinario' }, async d => {
-      const g = await guardar('inmuebles', Object.assign({ clienteId }, inm || {}, d, { logoIzq: sel.izq, logoDer: sel.der }), 'Inmueble guardado');
-      if (!inm) location.hash = '#/inmueble/' + g.id;
+    formulario(inm ? 'Editar establecimiento' : 'Nuevo establecimiento · ' + nombreCli(cliente(clienteId)), CAMPOS_INMUEBLE, inm || { riesgo: 'ordinario' }, async d => {
+      const iniciales = inm ? null : leerServiciosIniciales();
+      if (iniciales && iniciales.error) return { error: iniciales.error };
+      const g = await guardar('inmuebles', Object.assign({ clienteId }, inm || {}, d, { logoIzq: sel.izq, logoDer: sel.der }), 'Establecimiento guardado');
+      if (iniciales && iniciales.tipos.length) {
+        for (const t of iniciales.tipos) await Datos.guardar('servicios', servicioNuevo(g.id, t, iniciales, d.riesgo));
+        refrescarDB(); toast('Establecimiento guardado con ' + iniciales.tipos.length + ' servicio(s) contratado(s)');
+      }
+      if (!inm) { estado.ejercicio = iniciales ? iniciales.ejercicio : estado.ejercicio; location.hash = '#/inmueble/' + g.id; }
     }, Object.assign({
-      extraHtml: '<div class="campo ancho" id="cajaLogos"></div>',
+      extraHtml: (inm ? '' : htmlServiciosIniciales()) + '<div class="campo ancho" id="cajaLogos"></div>',
       alAbrir: () => pintarLogos(sel)
     }, inm ? {
       borrar: async () => {
@@ -156,6 +199,35 @@
         await borrar('inmuebles', inm.id, 'Inmueble eliminado'); location.hash = '#/cliente/' + inm.clienteId;
       }
     } : {}));
+  }
+
+  /* ---------- Servicios contratados al registrar el establecimiento ---------- */
+  function htmlServiciosIniciales() {
+    const anio = estado.ejercicio || +hoyISO().slice(0, 4);
+    return '<div class="campo ancho" style="border:1px solid var(--gris-claro);border-radius:10px;padding:10px 12px;background:#FAFBFC"><label>Servicios contratados</label>' +
+      '<span class="ayuda">Márquelos ahora o agréguelos después desde el establecimiento con «+ Contratar servicio».</span>' +
+      '<div style="display:flex;align-items:center;gap:8px;margin:8px 0"><span class="sub">Ejercicio</span><input type="number" id="svcAnio" value="' + anio + '" min="2020" max="2100" style="width:90px;font:inherit;border:1px solid #CDD5DF;border-radius:6px;padding:4px 6px"></div>' +
+      ORDEN_TIPOS.map(k => '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:4px 0"><input type="checkbox" id="svc_' + k + '" data-svc="' + k + '"><label for="svc_' + k + '" style="font-weight:500;color:var(--grafito)">' + esc(TIPOS[k].nombre) + '</label>' +
+        (k === 'SIMULACROS' ? '<select id="svcNumSim" style="font:inherit;font-size:12px">' + [1, 2, 3, 4, 5, 6].map(n => '<option>' + n + '</option>').join('') + '</select><span class="sub">simulacros al año</span>' : '') +
+        (k === 'CAPACITACIONES' ? '<input type="number" id="svcNumCur" min="0" value="0" style="width:60px;font:inherit;font-size:12px;border:1px solid #CDD5DF;border-radius:6px;padding:2px 4px"><span class="sub">cursos (0 = por definir)</span>' : '') +
+        (k === 'STPS' ? '<select id="svcStps" style="font:inherit;font-size:12px;max-width:220px">' + SERVICIOS_STPS.map(o => '<option>' + esc(o) + '</option>').join('') + '</select>' : '') + '</div>').join('') +
+      '<span class="ayuda">El PIPC toma la modalidad (riesgo alto u ordinario) del establecimiento.</span></div>';
+  }
+  function leerServiciosIniciales() {
+    const caja = $('#svcAnio'); if (!caja) return null;
+    const ejercicio = +caja.value || +hoyISO().slice(0, 4);
+    if (ejercicio < 2020 || ejercicio > 2100) return { error: 'Revise el ejercicio de los servicios.' };
+    return {
+      ejercicio, tipos: ORDEN_TIPOS.filter(k => $('#svc_' + k) && $('#svc_' + k).checked),
+      numSimulacros: +($('#svcNumSim') || {}).value || 1, numCursos: +($('#svcNumCur') || {}).value || 0, servicioStps: ($('#svcStps') || {}).value || 'Otro'
+    };
+  }
+  function servicioNuevo(inmuebleId, tipo, o, riesgo) {
+    const datos = {};
+    if (tipo === 'SIMULACROS') datos.numSimulacros = o.numSimulacros;
+    if (tipo === 'CAPACITACIONES') datos.numCursos = o.numCursos;
+    if (tipo === 'STPS') { datos.servicioStps = o.servicioStps; datos.avance = 0; }
+    return { inmuebleId, tipo, ejercicio: o.ejercicio, modalidad: tipo === 'PIPC' ? (riesgo || 'ordinario') : '', etapas: {}, datos };
   }
 
   /* ---------- Logotipos de los documentos (galería compartida) ---------- */
@@ -391,13 +463,17 @@
     const f = estado.filtroClientes.toLowerCase();
     const lista = DB.clientes.filter(c => !f || [c.razonSocial, c.nombreComercial, c.rfc].concat(DB.inmuebles.filter(i => i.clienteId === c.id).map(i => i.nombreComercial)).join(' ').toLowerCase().includes(f))
       .sort((a, b) => nombreCli(a).localeCompare(nombreCli(b)));
-    return '<div class="tarjeta"><div class="tarjeta-cab"><input class="buscador" id="buscarCliente" placeholder="Buscar cliente, RFC o inmueble…" value="' + esc(estado.filtroClientes) + '"><button class="btn" data-acc="nuevoCliente">+ Nuevo cliente</button></div>' +
+    const rep = gruposRepetidos();
+    return (rep.length ? '<div class="tarjeta" style="border-left:4px solid var(--ambar)"><h3>Clientes registrados más de una vez (' + rep.length + ')</h3><p class="sub">Tienen el mismo RFC o la misma razón social. Abra uno y use «Unir aquí» para dejar un solo registro con todos sus establecimientos.</p>' +
+      rep.map(g => '<div class="fila clic" data-acc="ir" data-h="#/cliente/' + g[0].id + '"><div class="crece"><b>' + esc(nombreCli(g[0])) + '</b><div class="sub">' + g.length + ' registros · ' + g.map(c => DB.inmuebles.filter(i => i.clienteId === c.id).length + ' establecimiento(s)').join(' + ') + '</div></div><span class="btn sec chico">Revisar</span></div>').join('') + '</div>' : '') +
+      '<div class="tarjeta"><div class="tarjeta-cab"><input class="buscador" id="buscarCliente" placeholder="Buscar cliente, RFC o inmueble…" value="' + esc(estado.filtroClientes) + '"><button class="btn" data-acc="nuevoCliente">+ Nuevo cliente</button></div>' +
       '<div class="lista">' + (lista.length ? lista.map(c => {
         const inms = DB.inmuebles.filter(i => i.clienteId === c.id);
         const serv = DB.servicios.filter(s => inms.some(i => i.id === s.inmuebleId) && +s.ejercicio === estado.ejercicio);
         const tipos = Array.from(new Set(serv.map(s => s.tipo)));
         const av = promedio(serv.map(avance));
-        return '<div class="fila clic" data-acc="ir" data-h="#/cliente/' + c.id + '"><div class="crece"><b>' + esc(nombreCli(c)) + '</b><div class="sub">' + esc(c.razonSocial) + (c.rfc ? ' · ' + esc(c.rfc) : '') + ' · ' + inms.length + ' inmueble' + (inms.length === 1 ? '' : 's') + '</div><div class="chips" style="margin-top:5px">' + tipos.map(etiquetaTipo).join('') + '</div></div>' +
+        return '<div class="fila clic" data-acc="ir" data-h="#/cliente/' + c.id + '"><div class="crece"><b>' + esc(nombreCli(c)) + '</b>' + (duplicadosDe(c).length ? ' <span class="etiqueta" style="background:var(--ambar)">Repetido</span>' : '') + '<div class="sub">' + esc(c.razonSocial) + (c.rfc ? ' · ' + esc(c.rfc) : '') + '</div>' +
+          '<div class="sub" style="margin-top:3px">🏢 ' + (inms.length ? inms.map(i => esc(i.nombreComercial)).join(' · ') : '<i>Sin establecimientos</i>') + '</div><div class="chips" style="margin-top:5px">' + tipos.map(etiquetaTipo).join('') + '</div></div>' +
           '<div style="width:130px">' + barra(av) + '</div><div class="avance-num">' + av + '%</div></div>';
       }).join('') : '<div class="vacio">No hay clientes' + (f ? ' que coincidan' : '') + '.</div>') + '</div></div>';
   }
@@ -406,16 +482,19 @@
     const c = porId('clientes', id); if (!c) return '<div class="vacio">Cliente no encontrado.</div>';
     titulo(nombreCli(c));
     const inms = DB.inmuebles.filter(i => i.clienteId === id).sort((a, b) => a.nombreComercial.localeCompare(b.nombreComercial));
+    const dups = duplicadosDe(c);
     return '<div class="migas"><a href="#/clientes">Clientes</a> › ' + esc(nombreCli(c)) + '</div>' +
+      (dups.length ? '<div class="tarjeta" style="border-left:4px solid var(--ambar)"><h3>Este cliente está registrado más de una vez</h3><p class="sub">Una los registros para tener una sola vista con todos sus establecimientos.</p>' +
+        dups.map(o => '<div class="fila"><div class="crece"><b>' + esc(nombreCli(o)) + '</b><div class="sub">' + esc(o.razonSocial || '') + (o.rfc ? ' · ' + esc(o.rfc) : '') + ' · ' + DB.inmuebles.filter(i => i.clienteId === o.id).map(i => esc(i.nombreComercial)).join(', ') + '</div></div><button class="btn acento chico" data-acc="unirCliente" data-id="' + c.id + '" data-o="' + o.id + '">Unir aquí</button></div>').join('') + '</div>' : '') +
       '<div class="tarjeta"><div class="tarjeta-cab"><h2>' + esc(nombreCli(c)) + '</h2><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn acento chico" data-acc="reporteAvance" data-id="' + id + '">📄 Reporte de avance</button><button class="btn sec chico" data-acc="editarCliente" data-id="' + id + '">Editar</button></div></div>' +
       '<div class="datos"><div class="dato"><small>Razón social</small><div>' + esc(c.razonSocial) + '</div></div><div class="dato"><small>RFC</small><div>' + esc(c.rfc || '—') + '</div></div>' +
       (c.notas ? '<div class="dato" style="grid-column:1/-1"><small>Notas</small><div>' + esc(c.notas) + '</div></div>' : '') + '</div></div>' +
-      '<div class="tarjeta"><div class="tarjeta-cab"><h3>Inmuebles y establecimientos (' + inms.length + ')</h3><button class="btn" data-acc="nuevoInmueble" data-id="' + id + '">+ Nuevo inmueble</button></div><div class="lista">' +
+      '<div class="tarjeta"><div class="tarjeta-cab"><h3>Inmuebles y establecimientos (' + inms.length + ')</h3><button class="btn" data-acc="nuevoInmueble" data-id="' + id + '">+ Agregar establecimiento</button></div><div class="lista">' +
       (inms.length ? inms.map(i => {
         const serv = DB.servicios.filter(s => s.inmuebleId === i.id && +s.ejercicio === estado.ejercicio);
         const av = promedio(serv.map(avance));
         return '<div class="fila clic" data-acc="ir" data-h="#/inmueble/' + i.id + '"><div class="crece"><b>' + esc(i.nombreComercial) + '</b> <span class="etiqueta borde" style="color:' + (i.riesgo === 'alto' ? 'var(--rojo)' : 'var(--verde)') + '">Riesgo ' + esc(i.riesgo) + '</span><div class="sub">' + esc(i.direccion || '') + '</div><div class="chips" style="margin-top:5px">' + serv.map(s => etiquetaTipo(s.tipo)).join('') + '</div></div><div style="width:120px">' + barra(av) + '</div><div class="avance-num">' + av + '%</div></div>';
-      }).join('') : '<div class="vacio">Registre el primer inmueble o establecimiento de este cliente.</div>') + '</div></div>';
+      }).join('') : '<div class="vacio">Agregue el primer establecimiento de este cliente.</div>') + '</div></div>';
   }
 
   function selectorEjercicio() {
@@ -1148,6 +1227,7 @@
     reactivarConst: el => estadoConstancia(el.dataset.id, false),
     constanciasEvento: el => constanciasEvento(el.dataset.id),
     editarCliente: el => formCliente(porId('clientes', el.dataset.id)),
+    unirCliente: el => unirClientes(el.dataset.id, el.dataset.o),
     nuevoInmueble: el => formInmueble(null, el.dataset.id),
     editarInmueble: el => { const i = porId('inmuebles', el.dataset.id); formInmueble(i, i.clienteId); },
     nuevoServicio: el => formServicio(el.dataset.id),
