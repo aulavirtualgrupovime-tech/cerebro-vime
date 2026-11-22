@@ -1474,7 +1474,7 @@
       dato('Folios', esc(prefijoFolio(cu)) + (emp ? '-NNN (uno para la empresa)' : '-001, -002…')) + '</div>' +
       (faltaDC3(cu).length ? '<div class="aviso-it rojo" style="margin-top:12px;cursor:default"><div><b>Faltan datos para emitir las DC-3</b><span>Complete en «Editar»: ' + esc(faltaDC3(cu).join(', ')) + '.</span></div></div>' : '') + '</div>' +
       '<div class="tarjeta"><div class="tarjeta-cab"><h3>Participantes (' + ps.length + ')</h3><div style="display:flex;gap:8px;flex-wrap:wrap">' +
-      '<button class="btn sec" data-acc="importarLista" data-id="' + cu.id + '">📥 Importar lista (Excel, Word o foto)</button><button class="btn acento" data-acc="nuevoParticipante" data-id="' + cu.id + '">+ Agregar</button></div></div>' +
+      '<a class="btn sec" href="plantillas/Plantilla_Participantes_Grupo_VIME.xlsx" download title="Plantilla para que el cliente llene los datos de sus trabajadores">⬇ Plantilla de Excel</a><button class="btn sec" data-acc="importarLista" data-id="' + cu.id + '">📥 Importar lista (Excel, Word o foto)</button><button class="btn acento" data-acc="nuevoParticipante" data-id="' + cu.id + '">+ Agregar</button></div></div>' +
       (emp ? '<p class="sub">Con constancia para toda la empresa la lista es opcional' + (dc3 ? ', pero se necesita para las DC-3.' : '; sirve como registro de asistencia.') + '</p>' : '') +
       (conErr.length ? '<div class="aviso-it ambar"><div><b>' + conErr.length + ' participante' + (conErr.length === 1 ? '' : 's') + ' con datos por revisar</b><span>' + (dc3 ? 'La CURP correcta es obligatoria para la DC-3.' : 'Revise nombres y apellidos.') + '</span></div></div>' : '') +
       (ps.length ? '<div style="overflow-x:auto"><table class="tabla"><thead><tr><th>#</th><th>Nombre</th><th>CURP</th><th>Puesto</th><th>Folio</th><th></th></tr></thead><tbody>' +
@@ -1706,7 +1706,7 @@
     $('#formLista').addEventListener('submit', async e => {
       e.preventDefault(); const btn = e.submitter; btn.disabled = true;
       try {
-        let nuevos = filas.map(x => ({ nombres: String(x.nombres || '').trim(), apellidoPaterno: String(x.apellidoPaterno || '').trim(), apellidoMaterno: String(x.apellidoMaterno || '').trim(), curp: String(x.curp || '').toUpperCase().replace(/\s+/g, ''), puesto: String(x.puesto || '').trim(), ocupacion: x.ocupacion || '', empresa: x.empresa || '' }))
+        let nuevos = filas.map(x => ({ nombres: String(x.nombres || '').trim(), apellidoPaterno: String(x.apellidoPaterno || '').trim(), apellidoMaterno: String(x.apellidoMaterno || '').trim(), curp: String(x.curp || '').toUpperCase().replace(/\s+/g, ''), puesto: String(x.puesto || '').trim(), ocupacion: (String(x.ocupacion || '').trim().match(/^(\d{2}\.\d)(?=\s|$)/) || [])[1] || String(x.ocupacion || '').trim(), empresa: x.empresa || '' }))
           .filter(x => x.nombres || x.apellidoPaterno);
         if (!nuevos.length) throw new Error('No hay participantes para guardar.');
         const base = $('#lisReemplazar') && $('#lisReemplazar').checked ? (cu.participantes || []).filter(p => p.folio) : (cu.participantes || []).slice();
