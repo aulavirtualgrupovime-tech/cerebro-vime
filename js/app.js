@@ -377,7 +377,7 @@
   const RUTAS = {
     panel: vistaPanel, clientes: vistaClientes, cliente: vistaCliente, inmueble: vistaInmueble, servicio: vistaServicio,
     calendario: vistaCalendario, avisos: vistaAvisos, pagos: vistaPagos, ajustes: vistaAjustes,
-    capacitaciones: vistaCapacitaciones, curso: vistaCurso, presupuestos: vistaPresupuestos, presupuesto: vistaPresupuesto
+    capacitaciones: vistaCapacitaciones, curso: vistaCurso, presupuestos: vistaPresupuestos, presupuesto: vistaPresupuesto, formatos: vistaFormatos
   };
   function ruta() { const p = (location.hash || '#/panel').slice(2).split('/'); return { nombre: RUTAS[p[0]] ? p[0] : 'panel', id: p[1] }; }
 
@@ -922,6 +922,7 @@
       if (/pdf/.test(tipo) || /\.pdf$/i.test(nombre)) await Importador.pdfEnPantalla(await blob.arrayBuffer(), cuerpo);
       else if (/^image\//.test(tipo) || /\.(jpe?g|png|webp|gif)$/i.test(nombre)) cuerpo.innerHTML = '<img src="' + url + '" alt="" style="max-width:100%;display:block;margin:0 auto;border-radius:6px">';
       else if (/\.docx$/i.test(nombre) || /wordprocessingml/.test(tipo)) { cuerpo.style.padding = '0'; await Docs.verDocx(blob, cuerpo); }
+      else if (/\.xlsx$/i.test(nombre)) marco(await excelAHtml(await blob.arrayBuffer()));
       else if (/\.doc$/i.test(nombre) || /msword|html/.test(tipo)) {
         const texto = await blob.text();
         if (/<html|<body|<table|<p/i.test(texto)) marco(texto.replace(/^\ufeff/, ''));
@@ -930,6 +931,54 @@
     } catch (ex) {
       cuerpo.innerHTML = '<div class="error-form">No se pudo abrir el documento: ' + esc(ex.message) + '</div>';
     }
+  }
+
+  /* ---------- Formatos Grupo VIME: ver y descargar ---------- */
+  const MIME_FORMATO = { pdf: 'application/pdf', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' };
+  const NOMBRE_TIPO = { pdf: 'PDF', docx: 'Word', xlsx: 'Excel' };
+  const scriptsFormato = {};
+  function scriptUnaVez(url) {
+    return scriptsFormato[url] || (scriptsFormato[url] = new Promise((ok, mal) => {
+      const s = document.createElement('script'); s.src = url; s.onload = ok;
+      s.onerror = () => { delete scriptsFormato[url]; s.remove(); mal(new Error('No se pudo cargar el formato. Revise su conexión a internet e intente de nuevo.')); };
+      document.head.appendChild(s);
+    }));
+  }
+  async function blobFormato(archivo) {
+    if (!window.FORMATOS_DATOS) await scriptUnaVez('js/formatos_datos.js?v=' + CONFIG.VERSION);
+    const b = window.FORMATOS_DATOS[archivo]; if (!b) throw new Error('Formato no disponible.');
+    const bin = atob(b), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+    return new Blob([u], { type: MIME_FORMATO[archivo.split('.').pop().toLowerCase()] || '' });
+  }
+  function archivoFormato(el) { const d = FORMATOS_GV[+el.dataset.d]; return { d, a: d.archivos[+el.dataset.a] }; }
+  function verFormato(el) {
+    const { d, a } = archivoFormato(el);
+    verArchivo({ nombre: a.archivo, sub: d.codigo + ' · ' + NOMBRE_TIPO[a.tipo], cargando: 'Abriendo formato…', obtener: () => blobFormato(a.archivo) });
+  }
+  async function bajarFormato(el) {
+    const { a } = archivoFormato(el);
+    try { descargar(await blobFormato(a.archivo), a.archivo); } catch (e) { toast(e.message, true); }
+  }
+  /** Vista de un Excel: cada hoja con sus renglones llenos (los vacíos se omiten). */
+  async function excelAHtml(buffer) {
+    if (!window.XLSX) await scriptUnaVez('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js');
+    const wb = XLSX.read(buffer, { type: 'array' });
+    return wb.SheetNames.map(n => '<h2>' + esc(n) + '</h2><table>' + XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: false, defval: '', blankrows: false })
+      .filter(f => f.some(c => String(c).trim())).map(f => '<tr>' + f.map(c => '<td>' + esc(c).replace(/\n/g, '<br>') + '</td>').join('') + '</tr>').join('') + '</table>').join('');
+  }
+  function vistaFormatos() {
+    titulo('Formatos Grupo VIME');
+    if (typeof FORMATOS_GV === 'undefined') return '<div class="vacio">Recargue la página para ver los formatos.</div>';
+    const f = (estado.filtroFormatos || '').toLowerCase();
+    let grupo = '', h = '';
+    FORMATOS_GV.forEach((d, i) => {
+      if (f && !(d.codigo + ' ' + d.nombre + ' ' + d.grupo).toLowerCase().includes(f)) return;
+      if (d.grupo !== grupo) { grupo = d.grupo; h += '<h3 style="margin:18px 0 4px;border-bottom:2px solid var(--dorado);padding-bottom:4px">' + esc(grupo) + '</h3>'; }
+      h += '<div class="fila" style="flex-wrap:wrap"><div class="crece" style="min-width:220px"><b>' + esc(d.nombre) + '</b><div class="sub">' + esc(d.codigo) + '</div></div>' +
+        d.archivos.map((a, j) => '<span style="display:flex;gap:4px"><button class="btn sec chico" data-acc="verFormato" data-d="' + i + '" data-a="' + j + '">👁 Ver ' + NOMBRE_TIPO[a.tipo] + '</button><button class="btn chico" data-acc="bajarFormato" data-d="' + i + '" data-a="' + j + '" title="Descargar ' + esc(a.archivo) + '">⬇ ' + NOMBRE_TIPO[a.tipo] + '</button></span>').join('') + '</div>';
+    });
+    return '<div class="tarjeta"><div class="tarjeta-cab"><h2>Formatos Grupo VIME</h2><input class="buscador" id="buscarFormato" placeholder="Buscar formato o clave…" value="' + esc(estado.filtroFormatos || '') + '"></div>' +
+      '<p class="sub">«Ver» lo muestra en pantalla; solo se descarga con «⬇».</p>' + (h || '<div class="vacio">Ningún formato coincide.</div>') + '</div>';
   }
 
   /* ---------- Guion y cronología (formato oficial) ---------- */
@@ -1261,6 +1310,8 @@
     programarDia: el => { const sid = $('#selProg').value; cerrarModal(); formEvento(sid, null, el.dataset.f); },
     importarPrograma: el => dialogoImportar(el.dataset.id),
     verDoc: el => verDocumento(el.dataset.id),
+    verFormato: el => verFormato(el),
+    bajarFormato: el => bajarFormato(el),
     verGuion: el => verGuion(el.dataset.id),
     editarGuion: el => formGuion(el.dataset.id),
     reporteAvance: el => dialogoReporte(el.dataset.id),
@@ -1930,6 +1981,10 @@
         marcarPresu(); return;
       }
       if (t.dataset.pri) { p.impuestos = Object.assign({}, p.impuestos, { [t.dataset.pri]: t.checked }); marcarPresu(); return; }
+    }
+    if (e.target.id === 'buscarFormato') {
+      estado.filtroFormatos = e.target.value; const pos = e.target.selectionStart; pintar();
+      const b = $('#buscarFormato'); b.focus(); b.setSelectionRange(pos, pos);
     }
     if (e.target.id === 'buscarPresu') {
       estado.filtroPresu = e.target.value; const pos = e.target.selectionStart; pintar();
