@@ -1336,6 +1336,10 @@
     verDoc: el => verDocumento(el.dataset.id),
     bajarFormato: el => bajarFormato(el.dataset.id),
     subirFormatos: () => subirFormatos(),
+    plantillaParticipantes: () => {
+      const d = DB.documentos.filter(x => x.categoria === 'formatoGV' && /^GV-CA-PL-001.*.xlsx$/i.test(x.nombre)).sort((x, y) => String(y.actualizado || '').localeCompare(String(x.actualizado || '')))[0];
+      if (d) bajarFormato(d.id); else toast('Falta la plantilla GV-CA-PL-001: la Directora puede subirla en Formatos Grupo VIME.', true);
+    },
     quitarFormato: async el => { const d = porId('documentos', el.dataset.id); if (d && confirm('¿Quitar «' + d.nombre + '» de la app? El archivo sigue en su Drive.')) await borrar('documentos', d.id, 'Formato quitado'); },
     verGuion: el => verGuion(el.dataset.id),
     editarGuion: el => formGuion(el.dataset.id),
@@ -1550,7 +1554,7 @@
       dato('Folios', esc(prefijoFolio(cu)) + (emp ? '-NNN (uno para la empresa)' : '-001, -002…')) + '</div>' +
       (faltaDC3(cu).length ? '<div class="aviso-it rojo" style="margin-top:12px;cursor:default"><div><b>Faltan datos para emitir las DC-3</b><span>Complete en «Editar»: ' + esc(faltaDC3(cu).join(', ')) + '.</span></div></div>' : '') + '</div>' +
       '<div class="tarjeta"><div class="tarjeta-cab"><h3>Participantes (' + ps.length + ')</h3><div style="display:flex;gap:8px;flex-wrap:wrap">' +
-      '<a class="btn sec" href="plantillas/Plantilla_Participantes_Grupo_VIME.xlsx" download title="Plantilla para que el cliente llene los datos de sus trabajadores">⬇ Plantilla de Excel</a><button class="btn sec" data-acc="importarLista" data-id="' + cu.id + '">📥 Importar lista (Excel, Word o foto)</button><button class="btn acento" data-acc="nuevoParticipante" data-id="' + cu.id + '">+ Agregar</button></div></div>' +
+      '<button class="btn sec" data-acc="plantillaParticipantes" title="Plantilla para que el cliente llene los datos de sus trabajadores">⬇ Plantilla de Excel</button><button class="btn sec" data-acc="importarLista" data-id="' + cu.id + '">📥 Importar lista (Excel, Word o foto)</button><button class="btn acento" data-acc="nuevoParticipante" data-id="' + cu.id + '">+ Agregar</button></div></div>' +
       (emp ? '<p class="sub">Con constancia para toda la empresa la lista es opcional' + (dc3 ? ', pero se necesita para las DC-3.' : '; sirve como registro de asistencia.') + '</p>' : '') +
       (conErr.length ? '<div class="aviso-it ambar"><div><b>' + conErr.length + ' participante' + (conErr.length === 1 ? '' : 's') + ' con datos por revisar</b><span>' + (dc3 ? 'La CURP correcta es obligatoria para la DC-3.' : 'Revise nombres y apellidos.') + '</span></div></div>' : '') +
       (ps.length ? '<div style="overflow-x:auto"><table class="tabla"><thead><tr><th>#</th><th>Nombre</th><th>CURP</th><th>Puesto</th><th>Folio</th><th></th></tr></thead><tbody>' +
