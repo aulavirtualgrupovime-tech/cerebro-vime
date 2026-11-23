@@ -1337,7 +1337,7 @@
     bajarFormato: el => bajarFormato(el.dataset.id),
     subirFormatos: () => subirFormatos(),
     plantillaParticipantes: () => {
-      const d = DB.documentos.filter(x => x.categoria === 'formatoGV' && /^GV-CA-PL-001.*.xlsx$/i.test(x.nombre)).sort((x, y) => String(y.actualizado || '').localeCompare(String(x.actualizado || '')))[0];
+      const d = DB.documentos.filter(x => x.categoria === 'formatoGV' && x.nombre.startsWith('GV-CA-PL-001') && x.nombre.toLowerCase().endsWith('.xlsx')).sort((x, y) => String(y.actualizado || '').localeCompare(String(x.actualizado || '')))[0];
       if (d) bajarFormato(d.id); else toast('Falta la plantilla GV-CA-PL-001: la Directora puede subirla en Formatos Grupo VIME.', true);
     },
     quitarFormato: async el => { const d = porId('documentos', el.dataset.id); if (d && confirm('¿Quitar «' + d.nombre + '» de la app? El archivo sigue en su Drive.')) await borrar('documentos', d.id, 'Formato quitado'); },
