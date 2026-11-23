@@ -977,7 +977,7 @@
           const previo = DB.documentos.find(d => d.categoria === 'formatoGV' && d.nombre === r.nombre);
           await Datos.guardar('documentos', Object.assign({}, previo || {}, { categoria: 'formatoGV', nombre: r.nombre, url: r.url, driveId: r.driveId || '', autor: Datos.usuario().nombre, fecha: hoyISO() }));
           DB = Datos.vista();
-        } catch (ex) { fallas.push(fs[n].name + ': ' + ex.message); }
+        } catch (ex) { fallas.push(fs[n].name + ': ' + (/.xlsx$/i.test(fs[n].name) && /Solo se aceptan PDF, fotos y documentos/.test(ex.message) ? 'el servidor de Google todavía tiene la versión anterior del archivo Código (falta publicar la «Nueva versión»)' : ex.message)); }
       }
       ocupado = false; refrescarDB();
       if (!fallas.length) { cerrarModal(); toast(fs.length + ' formato(s) guardados'); return; }
