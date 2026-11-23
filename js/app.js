@@ -933,31 +933,56 @@
     }
   }
 
-  /* ---------- Formatos Grupo VIME: ver y descargar ---------- */
-  const MIME_FORMATO = { pdf: 'application/pdf', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' };
+  /* ---------- Formatos Grupo VIME (privados: viven en Drive y el servidor solo los entrega con clave) ---------- */
   const NOMBRE_TIPO = { pdf: 'PDF', docx: 'Word', xlsx: 'Excel' };
+  const GRUPO_FORMATO = { AC: 'Actas', CT: 'Cartas y escritos', FO: 'Formatos', PL: 'Plantillas', LV: 'Listas de verificación', LM: 'Listas maestras' };
+  const tipoFormato = n => String(n).split('.').pop().toLowerCase();
   const scriptsFormato = {};
   function scriptUnaVez(url) {
     return scriptsFormato[url] || (scriptsFormato[url] = new Promise((ok, mal) => {
-      const s = document.createElement('script'); s.src = url; s.onload = ok;
-      s.onerror = () => { delete scriptsFormato[url]; s.remove(); mal(new Error('No se pudo cargar el formato. Revise su conexión a internet e intente de nuevo.')); };
-      document.head.appendChild(s);
+      const e = document.createElement('script'); e.src = url; e.onload = ok;
+      e.onerror = () => { delete scriptsFormato[url]; e.remove(); mal(new Error('No se pudo cargar el visor. Revise su conexión a internet e intente de nuevo.')); };
+      document.head.appendChild(e);
     }));
   }
-  async function blobFormato(archivo) {
-    if (!window.FORMATOS_DATOS) await scriptUnaVez('js/formatos_datos.js?v=' + CONFIG.VERSION);
-    const b = window.FORMATOS_DATOS[archivo]; if (!b) throw new Error('Formato no disponible.');
-    const bin = atob(b), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
-    return new Blob([u], { type: MIME_FORMATO[archivo.split('.').pop().toLowerCase()] || '' });
+  /** Formatos agrupados: mismo nombre en PDF y Word = un solo renglón. */
+  function listaFormatos() {
+    const g = {};
+    DB.documentos.filter(d => d.categoria === 'formatoGV').forEach(d => {
+      const base = d.nombre.replace(/\.[^.]+$/, ''), m = base.match(/^(GV-[A-Z]{2}-([A-Z]{2})-\d{3})\s+(.+)$/);
+      const x = g[base] || (g[base] = { codigo: m ? m[1] : '', nombre: m ? m[3] : base, grupo: m && GRUPO_FORMATO[m[2]] || 'Otros', archivos: [] });
+      x.archivos.push(d);
+    });
+    const orden = Object.values(GRUPO_FORMATO).concat('Otros'), tipos = ['pdf', 'docx', 'xlsx'];
+    return Object.values(g).map(x => { x.archivos.sort((a, b) => tipos.indexOf(tipoFormato(a.nombre)) - tipos.indexOf(tipoFormato(b.nombre))); return x; })
+      .sort((a, b) => orden.indexOf(a.grupo) - orden.indexOf(b.grupo) || (a.codigo + a.nombre).localeCompare(b.codigo + b.nombre));
   }
-  function archivoFormato(el) { const d = FORMATOS_GV[+el.dataset.d]; return { d, a: d.archivos[+el.dataset.a] }; }
-  function verFormato(el) {
-    const { d, a } = archivoFormato(el);
-    verArchivo({ nombre: a.archivo, sub: d.codigo + ' · ' + NOMBRE_TIPO[a.tipo], cargando: 'Abriendo formato…', obtener: () => blobFormato(a.archivo) });
+  async function bajarFormato(id) {
+    const d = porId('documentos', id); if (!d) return;
+    try { sinc('Descargando…'); const b = await Datos.obtenerArchivo(d); sinc(''); if (!b) throw new Error('No se pudo obtener el archivo.'); descargar(b, d.nombre); }
+    catch (e) { sinc(''); toast(e.message, true); }
   }
-  async function bajarFormato(el) {
-    const { a } = archivoFormato(el);
-    try { descargar(await blobFormato(a.archivo), a.archivo); } catch (e) { toast(e.message, true); }
+  function subirFormatos() {
+    abrirModal('Subir formatos', '<form class="form" id="formFor"><div class="campo ancho"><label>Archivos PDF, Word (.docx) o Excel (.xlsx)</label><input type="file" id="forArch" accept=".pdf,.docx,.xlsx" multiple required><span class="ayuda">Puede elegir varios. Si ya existe uno con el mismo nombre, se reemplaza.</span></div><div class="error-form" id="errFor" hidden></div><div class="form-pie"><button type="button" class="btn sec" data-acc="cerrarModal">Cancelar</button><button class="btn" type="submit">Subir</button></div></form>');
+    let ocupado = false;
+    $('#formFor').addEventListener('submit', async e => {
+      e.preventDefault(); if (ocupado) return;
+      const fs = Array.from($('#forArch').files); if (!fs.length) return;
+      ocupado = true; const b = $('#formFor button[type=submit]'); b.disabled = true; const fallas = [];
+      for (let n = 0; n < fs.length; n++) {
+        b.textContent = 'Subiendo ' + (n + 1) + ' de ' + fs.length + '…';
+        try {
+          if (!/\.(pdf|docx|xlsx)$/i.test(fs[n].name)) throw new Error('solo PDF, .docx o .xlsx');
+          const r = await Datos.subirArchivo(fs[n], ['Formatos Grupo VIME']);
+          const previo = DB.documentos.find(d => d.categoria === 'formatoGV' && d.nombre === r.nombre);
+          await Datos.guardar('documentos', Object.assign({}, previo || {}, { categoria: 'formatoGV', nombre: r.nombre, url: r.url, driveId: r.driveId || '', autor: Datos.usuario().nombre, fecha: hoyISO() }));
+          DB = Datos.vista();
+        } catch (ex) { fallas.push(fs[n].name + ': ' + ex.message); }
+      }
+      ocupado = false; refrescarDB();
+      if (!fallas.length) { cerrarModal(); toast(fs.length + ' formato(s) guardados'); return; }
+      const err = $('#errFor'); if (err) { err.textContent = 'No se subieron: ' + fallas.join(' · '); err.hidden = false; b.disabled = false; b.textContent = 'Subir'; } else toast('No se subieron ' + fallas.length + ' formato(s)', true);
+    });
   }
   /** Vista de un Excel: cada hoja con sus renglones llenos (los vacíos se omiten). */
   async function excelAHtml(buffer) {
@@ -968,17 +993,16 @@
   }
   function vistaFormatos() {
     titulo('Formatos Grupo VIME');
-    if (typeof FORMATOS_GV === 'undefined') return '<div class="vacio">Recargue la página para ver los formatos.</div>';
-    const f = (estado.filtroFormatos || '').toLowerCase();
+    const f = (estado.filtroFormatos || '').toLowerCase(), dir = Datos.esDirectora();
     let grupo = '', h = '';
-    FORMATOS_GV.forEach((d, i) => {
+    listaFormatos().forEach(d => {
       if (f && !(d.codigo + ' ' + d.nombre + ' ' + d.grupo).toLowerCase().includes(f)) return;
       if (d.grupo !== grupo) { grupo = d.grupo; h += '<h3 style="margin:18px 0 4px;border-bottom:2px solid var(--dorado);padding-bottom:4px">' + esc(grupo) + '</h3>'; }
       h += '<div class="fila" style="flex-wrap:wrap"><div class="crece" style="min-width:220px"><b>' + esc(d.nombre) + '</b><div class="sub">' + esc(d.codigo) + '</div></div>' +
-        d.archivos.map((a, j) => '<span style="display:flex;gap:4px"><button class="btn sec chico" data-acc="verFormato" data-d="' + i + '" data-a="' + j + '">👁 Ver ' + NOMBRE_TIPO[a.tipo] + '</button><button class="btn chico" data-acc="bajarFormato" data-d="' + i + '" data-a="' + j + '" title="Descargar ' + esc(a.archivo) + '">⬇ ' + NOMBRE_TIPO[a.tipo] + '</button></span>').join('') + '</div>';
+        d.archivos.map(a => { const t = esc(NOMBRE_TIPO[tipoFormato(a.nombre)] || 'archivo'); return '<span style="display:flex;gap:4px"><button class="btn sec chico" data-acc="verDoc" data-id="' + esc(a.id) + '">👁 Ver ' + t + '</button><button class="btn chico" data-acc="bajarFormato" data-id="' + esc(a.id) + '" title="Descargar ' + esc(a.nombre) + '">⬇ ' + t + '</button>' + (dir ? '<button class="btn-icono" data-acc="quitarFormato" data-id="' + esc(a.id) + '" title="Quitar ' + esc(a.nombre) + '">✕</button>' : '') + '</span>'; }).join('') + '</div>';
     });
-    return '<div class="tarjeta"><div class="tarjeta-cab"><h2>Formatos Grupo VIME</h2><input class="buscador" id="buscarFormato" placeholder="Buscar formato o clave…" value="' + esc(estado.filtroFormatos || '') + '"></div>' +
-      '<p class="sub">«Ver» lo muestra en pantalla; solo se descarga con «⬇».</p>' + (h || '<div class="vacio">Ningún formato coincide.</div>') + '</div>';
+    return '<div class="tarjeta"><div class="tarjeta-cab"><h2>Formatos Grupo VIME</h2><div style="display:flex;gap:8px;flex-wrap:wrap"><input class="buscador" id="buscarFormato" placeholder="Buscar formato o clave…" value="' + esc(estado.filtroFormatos || '') + '">' + (dir ? '<button class="btn" data-acc="subirFormatos">⬆ Subir formatos</button>' : '') + '</div></div>' +
+      '<p class="sub">🔒 Solo se abren con clave. «Ver» los muestra en pantalla; solo se descargan con «⬇».</p>' + (h || '<div class="vacio">' + (f ? 'Ningún formato coincide.' : 'Aún no hay formatos.' + (dir ? ' Use «⬆ Subir formatos».' : '')) + '</div>') + '</div>';
   }
 
   /* ---------- Guion y cronología (formato oficial) ---------- */
@@ -1310,8 +1334,9 @@
     programarDia: el => { const sid = $('#selProg').value; cerrarModal(); formEvento(sid, null, el.dataset.f); },
     importarPrograma: el => dialogoImportar(el.dataset.id),
     verDoc: el => verDocumento(el.dataset.id),
-    verFormato: el => verFormato(el),
-    bajarFormato: el => bajarFormato(el),
+    bajarFormato: el => bajarFormato(el.dataset.id),
+    subirFormatos: () => subirFormatos(),
+    quitarFormato: async el => { const d = porId('documentos', el.dataset.id); if (d && confirm('¿Quitar «' + d.nombre + '» de la app? El archivo sigue en su Drive.')) await borrar('documentos', d.id, 'Formato quitado'); },
     verGuion: el => verGuion(el.dataset.id),
     editarGuion: el => formGuion(el.dataset.id),
     reporteAvance: el => dialogoReporte(el.dataset.id),

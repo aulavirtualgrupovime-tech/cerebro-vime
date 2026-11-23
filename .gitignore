@@ -6,3 +6,7 @@ marca/
 GUIA_INSTALACION.md
 img/logo_aula.png
 
+
+# Formatos privados: nunca se publican en la página
+formatos_para_subir/
+js/formatos_*.js

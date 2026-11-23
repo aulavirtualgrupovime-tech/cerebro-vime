@@ -122,7 +122,7 @@ const Datos = (() => {
       fr.onload = () => ok(String(fr.result).split(',')[1]);
       fr.onerror = mal; fr.readAsDataURL(archivo);
     });
-    const tipo = archivo.type || (/\.pdf$/i.test(archivo.name) ? 'application/pdf' : /\.docx$/i.test(archivo.name) ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' : /\.doc$/i.test(archivo.name) ? 'application/msword' : /\.(jpe?g)$/i.test(archivo.name) ? 'image/jpeg' : /\.png$/i.test(archivo.name) ? 'image/png' : '');
+    const tipo = archivo.type || (/\.pdf$/i.test(archivo.name) ? 'application/pdf' : /\.xlsx$/i.test(archivo.name) ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : /\.docx$/i.test(archivo.name) ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' : /\.doc$/i.test(archivo.name) ? 'application/msword' : /\.(jpe?g)$/i.test(archivo.name) ? 'image/jpeg' : /\.png$/i.test(archivo.name) ? 'image/png' : '');
     const j = await llamar('subir', { nombre: archivo.name, tipo, base64, ruta });
     return { nombre: archivo.name, url: j.url, driveId: j.id };
   }
