@@ -234,7 +234,7 @@ const Docs = (() => {
       x.servicios.forEach(s => {
         b.push(sub(s.nombre + '  ·  ' + s.avance + ' %  (' + s.estado + ')'));
         if (s.nota) b.push(k.P([k.T(s.nota)]));
-        if (s.etapas.length) b.push(k.tabla([6000, 1700, W - 7700], ['Etapa', 'Estado', 'Fecha'], s.etapas.map(e => [e.t, e.hecha ? 'Cumplida' : e.espera ? 'En espera' : 'Pendiente', e.fecha || '—'])));
+        if (s.etapas.length) b.push(k.tabla([6000, 1700, W - 7700], ['Etapa', 'Estado', 'Fecha'], s.etapas.map(e => [e.t, e.na ? 'No aplica' : e.hecha ? 'Cumplida' : e.espera ? 'En espera' : 'Pendiente', e.fecha || '—'])));
         if (s.resoluciones && s.resoluciones.length) {
           b.push(k.P([k.T('Resoluciones de la autoridad', { bold: true, size: 20 })], { before: 100, after: 60, keepNext: true }));
           b.push(k.tabla([1900, 1500, 2000, W - 5400], ['Resolución', 'Notificación', 'Oficio', 'Seguimiento'], s.resoluciones.map(r => [r.tipo, r.fecha || '—', r.oficio || '—', r.seguimiento || '—'])));

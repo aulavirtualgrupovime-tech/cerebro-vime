@@ -168,6 +168,8 @@ function etapasServicio(s) {
     case 'VISTOBUENO': return [
       { k: 'solicitud', t: 'Elaboración de la solicitud de Visto Bueno' },
       { k: 'ingreso', t: 'Ingreso de la solicitud con el PIPC (1er trimestre)' },
+      { k: 'visita', t: 'Visita de inspección de la autoridad' },
+      { k: 'respuesta', t: 'Promoción de respuesta a visita de inspección', opcional: true, na: !!(d.noAplica || {}).respuesta },
       { k: 'obtenido', t: 'Visto Bueno obtenido y entregado al cliente' }
     ];
     case 'PAE': return [
@@ -196,7 +198,7 @@ function etapaHecha(obj, et) { return et.auto ? !!et.hecho : !!(obj.etapas && ob
 /** Porcentaje de avance (0–100) de un servicio. */
 function avanceServicio(s, eventos) {
   if (TIPOS_AVANCE_LIBRE.indexOf(s.tipo) >= 0) return Math.max(0, Math.min(100, +((s.datos || {}).avance) || 0));
-  const et = etapasServicio(s);
+  const et = etapasServicio(s).filter(e => !e.na); // lo marcado «No aplica» no cuenta
   let hechas = et.filter(e => etapaHecha(s, e)).length, total = et.length;
   if (s.tipo === 'SIMULACROS' || s.tipo === 'CAPACITACIONES') {
     const evs = (eventos || []).filter(e => e.servicioId === s.id && !e.cancelado);

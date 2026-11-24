@@ -619,11 +619,12 @@
 
   function htmlEtapas(obj, etapas, col) {
     return etapas.map(e => {
-      const hecha = etapaHecha(obj, e);
+      const hecha = !e.na && etapaHecha(obj, e);
       const f = (obj.etapas || {})[e.k] || '';
-      const bloqueada = e.auto || e.espera;
-      return '<div class="etapa' + (hecha ? ' hecha' : '') + (e.espera ? ' espera' : '') + '"><input type="checkbox" data-cambio="etapa" data-col="' + col + '" data-id="' + obj.id + '" data-k="' + e.k + '"' + (hecha ? ' checked' : '') + (bloqueada ? ' disabled' : '') + '>' +
+      const bloqueada = e.auto || e.espera || e.na;
+      return '<div class="etapa' + (hecha ? ' hecha' : '') + (e.espera || e.na ? ' espera' : '') + '"><input type="checkbox" data-cambio="etapa" data-col="' + col + '" data-id="' + obj.id + '" data-k="' + e.k + '"' + (hecha ? ' checked' : '') + (bloqueada ? ' disabled' : '') + '>' +
         '<span class="txt">' + esc(e.t) + (e.espera ? ' <span class="sub">(cuando la autoridad emita APROBADO)</span>' : '') + (e.auto ? ' <span class="sub">(se marca en el historial de resoluciones)</span>' : '') + '</span>' +
+        (e.opcional ? '<select data-cambio="etapaAplica" data-id="' + obj.id + '" data-k="' + e.k + '" title="Indique si esta etapa aplica" style="font:inherit;font-size:13px;border:1px solid #CDD5DF;border-radius:6px;padding:3px 6px"><option value="si">Aplica</option><option value="no"' + (e.na ? ' selected' : '') + '>No aplica</option></select>' : '') +
         (!e.auto && hecha ? '<input type="date" value="' + f + '" data-cambio="etapaFecha" data-col="' + col + '" data-id="' + obj.id + '" data-k="' + e.k + '" title="Fecha en que se cumplió">' : '') + '</div>';
     }).join('');
   }
@@ -1141,7 +1142,7 @@
         const d = s.datos || {};
         const r = {
           nombre: nombreServicio(s), estado: estadoServicio(s, DB.eventos), avance: avance(s),
-          etapas: etapasServicio(s).map(e => ({ t: e.t, hecha: etapaHecha(s, e), espera: !!e.espera && !etapaHecha(s, e), fecha: fechaCorta((s.etapas || {})[e.k]) })),
+          etapas: etapasServicio(s).map(e => ({ t: e.t, na: !!e.na, hecha: !e.na && etapaHecha(s, e), espera: !!e.espera && !etapaHecha(s, e), fecha: e.na ? '' : fechaCorta((s.etapas || {})[e.k]) })),
           pendientes: DB.pendientes.filter(p => p.servicioId === s.id).map(p => ({ descripcion: p.descripcion, fechaLimite: fechaCorta(p.fechaLimite), entregado: fechaCorta(p.entregado) })),
           nota: s.tipo === 'STPS' ? (d.servicioStps ? 'Servicio: ' + d.servicioStps + '. ' : '') + (d.descripcion || '') : s.tipo === 'OTRO' ? (d.descripcion || '') : ''
         };
@@ -1394,7 +1395,7 @@
       if (!nuevos.length) { toast('Esos servicios ya existen en ' + sig + '.'); return; }
       if (!confirm('¿Copiar ' + nuevos.length + ' servicio(s) al ejercicio ' + sig + '? Se crean en cero, sin fechas ni avance.')) return;
       for (const s of nuevos) {
-        const d = Object.assign({}, s.datos || {}); delete d.resultado; delete d.fechaNotificacion; delete d.escritos; delete d.resoluciones; if (TIPOS_AVANCE_LIBRE.indexOf(s.tipo) >= 0) d.avance = 0;
+        const d = Object.assign({}, s.datos || {}); delete d.resultado; delete d.fechaNotificacion; delete d.escritos; delete d.resoluciones; delete d.noAplica; if (TIPOS_AVANCE_LIBRE.indexOf(s.tipo) >= 0) d.avance = 0;
         await Datos.guardar('servicios', { inmuebleId: s.inmuebleId, tipo: s.tipo, ejercicio: sig, modalidad: s.modalidad, etapas: {}, datos: d });
       }
       estado.ejercicio = sig; refrescarDB(); toast('Servicios copiados a ' + sig);
@@ -2044,6 +2045,11 @@
       const et = Object.assign({}, obj.etapas || {});
       if (el.checked) et[el.dataset.k] = hoyISO(); else delete et[el.dataset.k];
       await guardar(el.dataset.col, Object.assign({}, obj, { etapas: et }));
+    },
+    etapaAplica: async el => {
+      const x = servicio(el.dataset.id), k = el.dataset.k, na = Object.assign({}, (x.datos || {}).noAplica), et = Object.assign({}, x.etapas || {});
+      if (el.value === 'no') { na[k] = true; delete et[k]; } else delete na[k];
+      await guardar('servicios', Object.assign({}, x, { etapas: et, datos: Object.assign({}, x.datos, { noAplica: na }) }));
     },
     etapaFecha: async el => {
       if (!el.value) return;
