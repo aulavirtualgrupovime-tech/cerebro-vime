@@ -23,7 +23,8 @@
   function barra(p) { return '<div class="barra-avance' + (p >= 100 ? ' listo' : '') + '"><i style="width:' + p + '%"></i></div>'; }
   function promedio(arr) { return arr.length ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length) : 0; }
   function nombreServicio(s) {
-    let n = TIPOS[s.tipo].nombre;
+    let n = s.tipo === 'OTRO' && s.datos && s.datos.nombreOtro ? s.datos.nombreOtro : TIPOS[s.tipo].nombre;
+    if (s.tipo === 'DICTAMEN' && s.datos && s.datos.tipoDictamen) n += ' · ' + s.datos.tipoDictamen;
     if (s.tipo === 'PIPC') n += ' · riesgo ' + (s.modalidad || inmueble(s.inmuebleId).riesgo || 'por definir');
     if (s.tipo === 'STPS' && s.datos && s.datos.servicioStps) n += ' · ' + s.datos.servicioStps;
     return n;
@@ -262,6 +263,8 @@
   }
 
   /* ---------- Servicios contratados al registrar el establecimiento ---------- */
+  /** Servicios que el equipo ya escribió en «Otro» (para sugerirlos). */
+  function otrosServicios() { return Array.from(new Set(DB.servicios.filter(s => s.tipo === 'OTRO').map(s => ((s.datos || {}).nombreOtro || '').trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b)); }
   function htmlServiciosIniciales() {
     const anio = estado.ejercicio || +hoyISO().slice(0, 4);
     return '<div class="campo ancho" style="border:1px solid var(--gris-claro);border-radius:10px;padding:10px 12px;background:#FAFBFC"><label>Servicios contratados</label>' +
@@ -270,16 +273,22 @@
       ORDEN_TIPOS.map(k => '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:4px 0"><input type="checkbox" id="svc_' + k + '" data-svc="' + k + '"><label for="svc_' + k + '" style="font-weight:500;color:var(--grafito)">' + esc(TIPOS[k].nombre) + '</label>' +
         (k === 'SIMULACROS' ? '<select id="svcNumSim" style="font:inherit;font-size:12px">' + [1, 2, 3, 4, 5, 6].map(n => '<option>' + n + '</option>').join('') + '</select><span class="sub">simulacros al año</span>' : '') +
         (k === 'CAPACITACIONES' ? '<input type="number" id="svcNumCur" min="0" value="0" style="width:60px;font:inherit;font-size:12px;border:1px solid #CDD5DF;border-radius:6px;padding:2px 4px"><span class="sub">cursos (0 = por definir)</span>' : '') +
-        (k === 'STPS' ? '<select id="svcStps" style="font:inherit;font-size:12px;max-width:220px">' + SERVICIOS_STPS.map(o => '<option>' + esc(o) + '</option>').join('') + '</select>' : '') + '</div>').join('') +
+        (k === 'STPS' ? '<select id="svcStps" style="font:inherit;font-size:12px;max-width:220px">' + SERVICIOS_STPS.map(o => '<option>' + esc(o) + '</option>').join('') + '</select>' : '') +
+        (k === 'DICTAMEN' ? '<input id="svcDictamen" placeholder="Tipo de dictamen (opcional)" style="font:inherit;font-size:12px;flex:1;min-width:170px;border:1px solid #CDD5DF;border-radius:6px;padding:3px 6px">' : '') +
+        (k === 'OTRO' ? '<input id="svcOtro" list="l_svcOtro" placeholder="Escriba el servicio" style="font:inherit;font-size:12px;flex:1;min-width:170px;border:1px solid #CDD5DF;border-radius:6px;padding:3px 6px"><datalist id="l_svcOtro">' + otrosServicios().map(o => '<option value="' + esc(o) + '">').join('') + '</datalist>' : '') + '</div>').join('') +
       '<span class="ayuda">El PIPC toma la modalidad (riesgo alto u ordinario) del establecimiento.</span></div>';
   }
   function leerServiciosIniciales() {
     const caja = $('#svcAnio'); if (!caja) return null;
     const ejercicio = +caja.value || +hoyISO().slice(0, 4);
     if (ejercicio < 2020 || ejercicio > 2100) return { error: 'Revise el ejercicio de los servicios.' };
+    const nombreOtro = (($('#svcOtro') || {}).value || '').trim();
+    if ($('#svc_OTRO') && $('#svc_OTRO').checked && !nombreOtro) return { error: 'Marcó «Otro»: escriba el nombre del servicio.' };
+    if (nombreOtro && $('#svc_OTRO') && !$('#svc_OTRO').checked) return { error: 'Escribió un servicio en «Otro»: márquelo o borre el texto.' };
     return {
       ejercicio, tipos: ORDEN_TIPOS.filter(k => $('#svc_' + k) && $('#svc_' + k).checked),
-      numSimulacros: +($('#svcNumSim') || {}).value || 1, numCursos: +($('#svcNumCur') || {}).value || 0, servicioStps: ($('#svcStps') || {}).value || 'Otro'
+      numSimulacros: +($('#svcNumSim') || {}).value || 1, numCursos: +($('#svcNumCur') || {}).value || 0, servicioStps: ($('#svcStps') || {}).value || 'Otro',
+      tipoDictamen: (($('#svcDictamen') || {}).value || '').trim(), nombreOtro
     };
   }
   function servicioNuevo(inmuebleId, tipo, o, riesgo) {
@@ -287,6 +296,8 @@
     if (tipo === 'SIMULACROS') datos.numSimulacros = o.numSimulacros;
     if (tipo === 'CAPACITACIONES') datos.numCursos = o.numCursos;
     if (tipo === 'STPS') { datos.servicioStps = o.servicioStps; datos.avance = 0; }
+    if (tipo === 'DICTAMEN') datos.tipoDictamen = o.tipoDictamen || '';
+    if (tipo === 'OTRO') { datos.nombreOtro = o.nombreOtro; datos.avance = 0; }
     return { inmuebleId, tipo, ejercicio: o.ejercicio, modalidad: tipo === 'PIPC' ? (riesgo || 'ordinario') : '', etapas: {}, datos };
   }
 
@@ -350,7 +361,9 @@
   function formServicio(inmuebleId, s) {
     const inm = inmueble(inmuebleId);
     const campos = [
-      { k: 'tipo', t: 'Servicio', tipo: 'select', opciones: ORDEN_TIPOS.map(k => ({ v: k, t: TIPOS[k].nombre })), req: true, ancho: true },
+      { k: 'tipo', t: 'Servicio', tipo: 'select', opciones: ORDEN_TIPOS.map(k => ({ v: k, t: k === 'OTRO' ? 'Otro (escribir)' : TIPOS[k].nombre })), req: true, ancho: true },
+      { k: 'nombreOtro', t: '¿Qué servicio es? *', ancho: true, lista: otrosServicios() },
+      { k: 'tipoDictamen', t: 'Tipo de dictamen', ancho: true, ayuda: 'Opcional. Por ejemplo: estructural, eléctrico, gas.' },
       { k: 'ejercicio', t: 'Ejercicio (año)', tipo: 'number', req: true, min: 2020, max: 2100 },
       { k: 'modalidad', t: 'Modalidad del PIPC', tipo: 'select', opciones: [{ v: 'ordinario', t: 'Riesgo ordinario' }, { v: 'alto', t: 'Riesgo alto' }] },
       { k: 'numSimulacros', t: 'Simulacros contratados al año', tipo: 'select', opciones: [1, 2, 3, 4, 5, 6] },
@@ -367,8 +380,10 @@
       if (v.tipo === 'SIMULACROS') datos.numSimulacros = +v.numSimulacros || 1;
       if (v.tipo === 'CAPACITACIONES') datos.numCursos = +v.numCursos || 0;
       if (v.tipo === 'STPS') { datos.servicioStps = v.servicioStps; datos.avance = datos.avance || 0; }
+      if (v.tipo === 'DICTAMEN') datos.tipoDictamen = (v.tipoDictamen || '').trim();
+      if (v.tipo === 'OTRO') { datos.nombreOtro = (v.nombreOtro || '').trim(); datos.avance = datos.avance || 0; if (!datos.nombreOtro) return { error: 'Escriba qué servicio es.' }; }
       datos.descripcion = v.descripcion;
-      if (!s && DB.servicios.some(x => x.inmuebleId === inmuebleId && x.tipo === v.tipo && +x.ejercicio === +v.ejercicio && v.tipo !== 'STPS')) {
+      if (!s && DB.servicios.some(x => x.inmuebleId === inmuebleId && x.tipo === v.tipo && +x.ejercicio === +v.ejercicio && TIPOS_MULTIPLES.indexOf(v.tipo) < 0)) {
         return { error: 'Este inmueble ya tiene ' + TIPOS[v.tipo].nombre + ' en el ejercicio ' + v.ejercicio + '.' };
       }
       const obj = Object.assign({ inmuebleId, etapas: {} }, s || {}, { tipo: v.tipo, ejercicio: +v.ejercicio, modalidad: v.tipo === 'PIPC' ? v.modalidad : '', datos });
@@ -382,7 +397,7 @@
         const ajustar = () => {
           const t = $('#f_tipo').value;
           const ver = (k, si) => { const el = $('#f_' + k); if (el) el.closest('.campo').hidden = !si; };
-          ver('modalidad', t === 'PIPC'); ver('numSimulacros', t === 'SIMULACROS'); ver('numCursos', t === 'CAPACITACIONES'); ver('servicioStps', t === 'STPS');
+          ver('modalidad', t === 'PIPC'); ver('numSimulacros', t === 'SIMULACROS'); ver('numCursos', t === 'CAPACITACIONES'); ver('servicioStps', t === 'STPS'); ver('nombreOtro', t === 'OTRO'); ver('tipoDictamen', t === 'DICTAMEN');
           if (s) $('#f_tipo').disabled = true;
         };
         $('#f_tipo').addEventListener('change', ajustar); ajustar();
@@ -588,13 +603,13 @@
   function vistaServicio(id) {
     const s = servicio(id); if (!s) return '<div class="vacio">Servicio no encontrado.</div>';
     const { i, c } = cadena(s);
-    titulo(TIPOS[s.tipo].corto + ' · ' + i.nombreComercial);
+    titulo(cortoServicio(s) + ' · ' + i.nombreComercial);
     const av = avance(s);
     const pest = [['etapas', 'Avance'], ['documentos', 'Documentos'], ['pendientes', 'Pendientes del cliente'], ['notas', 'Bitácora de notas']];
     if (Datos.esDirectora()) pest.push(['pagos', 'Pagos 🔒']);
     if (!pest.some(p => p[0] === estado.pestanaServicio)) estado.pestanaServicio = 'etapas';
     const cuerpo = { etapas: tabEtapas, documentos: tabDocumentos, pendientes: tabPendientes, notas: tabNotas, pagos: tabPagos }[estado.pestanaServicio](s);
-    return '<div class="migas"><a href="#/clientes">Clientes</a> › <a href="#/cliente/' + c.id + '">' + esc(nombreCli(c)) + '</a> › <a href="#/inmueble/' + i.id + '">' + esc(i.nombreComercial) + '</a> › ' + esc(TIPOS[s.tipo].corto) + ' ' + s.ejercicio + '</div>' +
+    return '<div class="migas"><a href="#/clientes">Clientes</a> › <a href="#/cliente/' + c.id + '">' + esc(nombreCli(c)) + '</a> › <a href="#/inmueble/' + i.id + '">' + esc(i.nombreComercial) + '</a> › ' + esc(cortoServicio(s)) + ' ' + s.ejercicio + '</div>' +
       '<div class="tarjeta"><div class="tarjeta-cab"><div>' + etiquetaTipo(s.tipo) + ' <span class="etiqueta borde" style="color:var(--marino)">Ejercicio ' + s.ejercicio + '</span><h2 style="margin-top:8px">' + esc(nombreServicio(s)) + '</h2><div class="sub">' + esc(nombreCli(c)) + ' · ' + esc(i.nombreComercial) + '</div></div>' +
       '<button class="btn sec chico" data-acc="editarServicio" data-id="' + id + '">Editar</button></div>' +
       '<div style="display:flex;align-items:center;gap:12px"><div style="flex:1">' + barra(av) + '</div><div class="avance-num" style="font-size:18px">' + av + '%</div></div>' +
@@ -616,9 +631,9 @@
   function tabEtapas(s) {
     let h = '';
     const et = etapasServicio(s);
-    if (s.tipo === 'STPS') {
+    if (TIPOS_AVANCE_LIBRE.indexOf(s.tipo) >= 0) {
       const d = s.datos || {};
-      h += '<div class="tarjeta"><h3>Avance de atención y cumplimiento</h3><div class="datos" style="margin-bottom:12px"><div class="dato"><small>Servicio</small><div>' + esc(d.servicioStps || '—') + '</div></div></div>' +
+      h += '<div class="tarjeta"><h3>Avance de atención y cumplimiento</h3><div class="datos" style="margin-bottom:12px"><div class="dato"><small>Servicio</small><div>' + esc((s.tipo === 'OTRO' ? d.nombreOtro : d.servicioStps) || '—') + '</div></div></div>' +
         '<div style="display:flex;align-items:center;gap:14px"><input type="range" min="0" max="100" step="5" value="' + (+d.avance || 0) + '" data-cambio="avanceStps" data-id="' + s.id + '" style="flex:1;accent-color:var(--marino)"><b class="avance-num" id="numStps" style="font-size:18px">' + (+d.avance || 0) + '%</b></div>' +
         '<p class="sub">Mueva la barra para registrar el avance y deje el detalle en la bitácora de notas.</p></div>';
       return h;
@@ -936,7 +951,7 @@
         if (archivo) {
           btn.textContent = 'Guardando el programa…';
           const { i, c } = cadena(s);
-          const r = await Datos.subirArchivo(archivo, [nombreCli(c), i.nombreComercial, String(s.ejercicio), TIPOS[s.tipo].corto]);
+          const r = await Datos.subirArchivo(archivo, [nombreCli(c), i.nombreComercial, String(s.ejercicio), cortoServicio(s)]);
           await Datos.guardar('documentos', { servicioId: s.id, categoria: 'programa', nombre: r.nombre, url: r.url, driveId: r.driveId || '', autor: Datos.usuario().nombre, fecha: hoyISO() });
         }
         cerrarModal(); refrescarDB(); toast(listos.length + ' fecha(s) agregadas al calendario');
@@ -1128,7 +1143,7 @@
           nombre: nombreServicio(s), estado: estadoServicio(s, DB.eventos), avance: avance(s),
           etapas: etapasServicio(s).map(e => ({ t: e.t, hecha: etapaHecha(s, e), espera: !!e.espera && !etapaHecha(s, e), fecha: fechaCorta((s.etapas || {})[e.k]) })),
           pendientes: DB.pendientes.filter(p => p.servicioId === s.id).map(p => ({ descripcion: p.descripcion, fechaLimite: fechaCorta(p.fechaLimite), entregado: fechaCorta(p.entregado) })),
-          nota: s.tipo === 'STPS' ? (d.servicioStps ? 'Servicio: ' + d.servicioStps + '. ' : '') + (d.descripcion || '') : ''
+          nota: s.tipo === 'STPS' ? (d.servicioStps ? 'Servicio: ' + d.servicioStps + '. ' : '') + (d.descripcion || '') : s.tipo === 'OTRO' ? (d.descripcion || '') : ''
         };
         if (s.tipo === 'PIPC') r.resoluciones = resolucionesPIPC(s).map(x => ({
           tipo: RESULTADOS_PIPC[x.tipo], fecha: fechaCorta(x.fecha), oficio: x.oficio,
@@ -1197,25 +1212,28 @@
         '</tbody></table></div>' : '<div class="vacio">' + (f ? 'Sin resultados.' : 'Aún no hay presupuestos.') + '</div>') + '</div>';
   }
 
+  /** Tipos de servicio para presupuestos: los fijos y los que el equipo ya escribió en «Otro». */
+  function tiposPresu() { const fijos = Presupuestos.TIPOS_SERVICIO, vistos = new Set(fijos.map(t => t.toLowerCase())); return fijos.concat(otrosServicios().concat((DB.presupuestos || []).map(p => (p.tipoServicio || '').trim())).filter(t => t && !vistos.has(t.toLowerCase()) && vistos.add(t.toLowerCase()))); }
   function formNuevoPresupuesto() {
     const anio = +hoyISO().slice(0, 4);
     abrirModal('Nuevo presupuesto', '<form class="form" id="formPresu">' +
-      '<div class="campo ancho"><label for="npTipo">Tipo de servicio *</label><input id="npTipo" list="l_np_tipo" value="' + esc(Presupuestos.TIPOS_SERVICIO[0]) + '"><datalist id="l_np_tipo">' + Presupuestos.TIPOS_SERVICIO.map(t => '<option value="' + esc(t) + '">').join('') + '</datalist><span class="ayuda">Aparece en el encabezado como «Servicio: …». Puede escribir otro.</span></div>' +
+      '<div class="campo ancho"><label for="npTipo">Tipo de servicio *</label><select id="npTipo">' + tiposPresu().map(t => '<option>' + esc(t) + '</option>').join('') + '<option value="__otro">Otro (escribir)</option></select><span class="ayuda">Aparece en el encabezado como «Servicio: …».</span></div><div class="campo ancho" id="cajaNpOtro" hidden><label for="npOtro">¿Qué servicio es? *</label><input id="npOtro" placeholder="Escriba el servicio"></div>' +
       '<div class="campo ancho"><label for="npInm">Establecimiento</label><select id="npInm">' + opcionesEstablecimiento('') + '</select></div>' +
       '<div class="campo ancho"><label for="npEst">Nombre del establecimiento en el presupuesto *</label><input id="npEst" placeholder="Ej. Hotel Huayacan"></div>' +
       '<div class="campo"><label for="npAnio">Ejercicio</label><input id="npAnio" type="number" value="' + (anio + (+hoyISO().slice(5, 7) >= 10 ? 1 : 0)) + '"></div>' +
       '<div class="campo check"><input type="checkbox" id="npLlenar" checked><label for="npLlenar">Llenar la tabla con los conceptos de este tipo de servicio</label></div>' +
       '<div class="error-form" id="errNp" hidden></div><div class="form-pie"><button type="button" class="btn sec" data-acc="cerrarModal">Cancelar</button><button class="btn" type="submit">Crear presupuesto</button></div></form>');
+    $('#npTipo').onchange = e => { const o = e.target.value === '__otro'; $('#cajaNpOtro').hidden = !o; if (o) $('#npOtro').focus(); };
     $('#npInm').onchange = e => { const i = inmueble(e.target.value); if (i && i.id) $('#npEst').value = i.nombreComercial; };
     $('#formPresu').addEventListener('submit', async e => {
       e.preventDefault();
-      const tipo = $('#npTipo').value.trim(), est = $('#npEst').value.trim(), anio = +$('#npAnio').value || +hoyISO().slice(0, 4);
+      const tipo = ($('#npTipo').value === '__otro' ? $('#npOtro') : $('#npTipo')).value.trim(), est = $('#npEst').value.trim(), anio = +$('#npAnio').value || +hoyISO().slice(0, 4);
       if (!tipo || !est) { $('#errNp').textContent = 'Escriba el tipo de servicio y el nombre del establecimiento.'; $('#errNp').hidden = false; return; }
       const p = {
         folio: siguienteFolio(+hoyISO().slice(0, 4)), fecha: hoyISO(), estado: 'Borrador', tipoServicio: tipo, inmuebleId: $('#npInm').value, establecimiento: est, ejercicio: anio,
         conceptos: $('#npLlenar').checked ? Presupuestos.conceptosDe(tipo, anio) : [], impuestos: {}, mostrarTotal: true, condiciones: Presupuestos.CONDICIONES.slice(), autor: Datos.usuario().nombre
       };
-      if (!p.conceptos.length) p.conceptos.push({ servicio: '', descripcion: '', costo: '', cantidad: 1, nota: '' });
+      if (!p.conceptos.length) p.conceptos.push({ servicio: $('#npLlenar').checked ? tipo.toUpperCase() : '', descripcion: '', costo: '', cantidad: 1, nota: '' });
       const g = await guardar('presupuestos', p, 'Presupuesto ' + p.folio + ' creado');
       cerrarModal(); estado.presu = null; location.hash = '#/presupuesto/' + g.id;
     });
@@ -1250,7 +1268,7 @@
       '<div class="form">' +
       '<div class="campo"><label>Fecha</label><input type="date" data-pre="fecha" value="' + esc(p.fecha) + '"></div>' +
       '<div class="campo"><label>Estado</label><select data-pre="estado">' + ESTADOS_PRESU.map(e => '<option' + (e === (p.estado || 'Borrador') ? ' selected' : '') + '>' + e + '</option>').join('') + '</select></div>' +
-      '<div class="campo ancho"><label>Tipo de servicio</label><input data-pre="tipoServicio" list="l_pre_tipo" value="' + esc(p.tipoServicio) + '"><datalist id="l_pre_tipo">' + Presupuestos.TIPOS_SERVICIO.map(t => '<option value="' + esc(t) + '">').join('') + '</datalist></div>' +
+      '<div class="campo ancho"><label>Tipo de servicio</label><input data-pre="tipoServicio" list="l_pre_tipo" value="' + esc(p.tipoServicio) + '"><datalist id="l_pre_tipo">' + tiposPresu().map(t => '<option value="' + esc(t) + '">').join('') + '</datalist></div>' +
       '<div class="campo"><label>Establecimiento registrado</label><select data-pre="inmuebleId">' + opcionesEstablecimiento(p.inmuebleId) + '</select></div>' +
       '<div class="campo"><label>Nombre en el presupuesto</label><input data-pre="establecimiento" id="presuEst" value="' + esc(p.establecimiento) + '"></div>' +
       '</div></div>' +
@@ -1372,11 +1390,11 @@
     copiarEjercicio: async el => {
       const sig = estado.ejercicio + 1;
       const actuales = DB.servicios.filter(s => s.inmuebleId === el.dataset.id && +s.ejercicio === estado.ejercicio);
-      const nuevos = actuales.filter(s => s.tipo === 'STPS' || !DB.servicios.some(x => x.inmuebleId === s.inmuebleId && x.tipo === s.tipo && +x.ejercicio === sig));
+      const nuevos = actuales.filter(s => TIPOS_MULTIPLES.indexOf(s.tipo) >= 0 || !DB.servicios.some(x => x.inmuebleId === s.inmuebleId && x.tipo === s.tipo && +x.ejercicio === sig));
       if (!nuevos.length) { toast('Esos servicios ya existen en ' + sig + '.'); return; }
       if (!confirm('¿Copiar ' + nuevos.length + ' servicio(s) al ejercicio ' + sig + '? Se crean en cero, sin fechas ni avance.')) return;
       for (const s of nuevos) {
-        const d = Object.assign({}, s.datos || {}); delete d.resultado; delete d.fechaNotificacion; delete d.escritos; delete d.resoluciones; if (s.tipo === 'STPS') d.avance = 0;
+        const d = Object.assign({}, s.datos || {}); delete d.resultado; delete d.fechaNotificacion; delete d.escritos; delete d.resoluciones; if (TIPOS_AVANCE_LIBRE.indexOf(s.tipo) >= 0) d.avance = 0;
         await Datos.guardar('servicios', { inmuebleId: s.inmuebleId, tipo: s.tipo, ejercicio: sig, modalidad: s.modalidad, etapas: {}, datos: d });
       }
       estado.ejercicio = sig; refrescarDB(); toast('Servicios copiados a ' + sig);
@@ -1482,7 +1500,7 @@
           if (!fs.length) throw new Error('Elija al menos un archivo.');
           for (const f of fs) {
             btn.textContent = 'Subiendo ' + f.name + '…';
-            const r = await Datos.subirArchivo(f, [nombreCli(c), i.nombreComercial, String(s.ejercicio), TIPOS[s.tipo].corto].concat(extra ? [extra.resolucionId ? 'Resoluciones' : extra.eventoId ? 'Guiones' : 'Otros'] : []));
+            const r = await Datos.subirArchivo(f, [nombreCli(c), i.nombreComercial, String(s.ejercicio), cortoServicio(s)].concat(extra ? [extra.resolucionId ? 'Resoluciones' : extra.eventoId ? 'Guiones' : 'Otros'] : []));
             await Datos.guardar('documentos', Object.assign({ nombre: r.nombre, url: r.url, driveId: r.driveId || '' }, base));
           }
         } else {
@@ -1973,7 +1991,7 @@
     try {
       sinc('Subiendo…');
       const f = new File([L.res.lote], L.nombreLote, { type: 'application/pdf' });
-      const r = await Datos.subirArchivo(f, [nombreCli(c), i.nombreComercial, String(s.ejercicio), TIPOS[s.tipo].corto, L.tipo === 'dc3' ? 'DC-3' : 'Constancias']);
+      const r = await Datos.subirArchivo(f, [nombreCli(c), i.nombreComercial, String(s.ejercicio), cortoServicio(s), L.tipo === 'dc3' ? 'DC-3' : 'Constancias']);
       await Datos.guardar('documentos', { nombre: r.nombre, url: r.url, driveId: r.driveId || '', servicioId: s.id, eventoId: cu.eventoId || '', autor: Datos.usuario().nombre, fecha: hoyISO(), categoria: 'constancias' });
       sinc(''); refrescarDB(); toast('Lote guardado en Documentos del servicio');
     } catch (e) { sinc(''); toast(e.message, true); }

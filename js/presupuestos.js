@@ -33,7 +33,9 @@ const Presupuestos = (() => {
     'Cumplimiento de Normatividad en Materia de Protección Civil',
     'Cumplimiento Normativo STPS',
     'Capacitación en Protección Civil',
-    'Programa Anual de Simulacros'
+    'Programa Anual de Simulacros',
+    'Elaboración de Plan de Atención de Emergencias',
+    'Dictámenes de Seguridad'
   ];
 
   const CONDICIONES = [
@@ -60,13 +62,20 @@ const Presupuestos = (() => {
     { clave: 'vistobueno', nombre: 'Gestoría de Visto Bueno', servicio: 'GESTORÍA DE VISTO BUENO', costo: '',
       descripcion: '• Integración de la solicitud y sus anexos.\n• Ingreso ante la autoridad de Protección Civil junto con el PIPC.\n• Seguimiento hasta la obtención del Visto Bueno.' },
     { clave: 'stps', nombre: 'Cumplimiento normativo STPS', servicio: 'CUMPLIMIENTO NORMATIVO STPS', costo: '',
-      descripcion: '• Diagnóstico de cumplimiento de las Normas Oficiales Mexicanas aplicables.\n• Elaboración de programas, procedimientos y registros requeridos.\n• Acompañamiento en visitas de inspección de la STPS.' }
+      descripcion: '• Diagnóstico de cumplimiento de las Normas Oficiales Mexicanas aplicables.\n• Elaboración de programas, procedimientos y registros requeridos.\n• Acompañamiento en visitas de inspección de la STPS.' },
+    { clave: 'pae', nombre: 'Plan de Atención de Emergencias', servicio: 'ELABORACIÓN DE PLAN DE ATENCIÓN DE EMERGENCIAS', costo: '',
+      descripcion: '• Levantamiento físico y recolección de información del establecimiento.\n• Elaboración del Plan de Atención de Emergencias {año}.\n• Revisión y validación con el cliente.\n• Entrega del plan y explicación de su contenido para su correcta ejecución.' },
+    { clave: 'dictamenes', nombre: 'Dictámenes de Seguridad', servicio: 'DICTÁMENES DE SEGURIDAD', costo: '', nota: '(Por dictamen)',
+      descripcion: '• Visita e inspección del establecimiento.\n• Elaboración del dictamen.\n• Entrega del dictamen al cliente.' },
+    { clave: 'otro', nombre: 'Otro (escribir)', servicio: '', costo: '', descripcion: '' }
   ];
   const PLANTILLAS = {
     'Cumplimiento de Normatividad en Materia de Protección Civil': ['pipc', 'capacitacion', 'asesoria', 'gestoria'],
     'Cumplimiento Normativo STPS': ['stps'],
     'Capacitación en Protección Civil': ['capacitacion'],
-    'Programa Anual de Simulacros': ['simulacros', 'bitacora']
+    'Programa Anual de Simulacros': ['simulacros', 'bitacora'],
+    'Elaboración de Plan de Atención de Emergencias': ['pae'],
+    'Dictámenes de Seguridad': ['dictamenes']
   };
 
   function concepto(clave, anio) {

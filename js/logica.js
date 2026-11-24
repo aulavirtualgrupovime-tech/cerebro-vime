@@ -68,9 +68,18 @@ const TIPOS = {
   SIMULACROS: { nombre: 'Programa Anual de Simulacros', corto: 'Simulacros', color: '#EA7001' },
   CAPACITACIONES: { nombre: 'Programa Anual de Capacitaciones', corto: 'Capacitaciones', color: '#136CA8' },
   VISTOBUENO: { nombre: 'Gestoría de Visto Bueno', corto: 'Visto Bueno', color: '#C8962E' },
-  STPS: { nombre: 'Cumplimiento Normativo STPS', corto: 'STPS', color: '#2E7D5B' }
+  STPS: { nombre: 'Cumplimiento Normativo STPS', corto: 'STPS', color: '#2E7D5B' },
+  PAE: { nombre: 'Elaboración de Plan de Atención de Emergencias', corto: 'Plan de Emergencias', color: '#A83232' },
+  DICTAMEN: { nombre: 'Dictámenes de Seguridad', corto: 'Dictámenes', color: '#6B4E9B' },
+  OTRO: { nombre: 'Otro', corto: 'Otro', color: '#4A5568' }
 };
-const ORDEN_TIPOS = ['PIPC', 'BITACORA', 'SIMULACROS', 'CAPACITACIONES', 'VISTOBUENO', 'STPS'];
+const ORDEN_TIPOS = ['PIPC', 'BITACORA', 'SIMULACROS', 'CAPACITACIONES', 'VISTOBUENO', 'STPS', 'PAE', 'DICTAMEN', 'OTRO'];
+/** Servicios que pueden contratarse varias veces en el mismo ejercicio. */
+const TIPOS_MULTIPLES = ['STPS', 'DICTAMEN', 'OTRO'];
+/** Servicios cuyo avance se registra con la barra (sin etapas fijas). */
+const TIPOS_AVANCE_LIBRE = ['STPS', 'OTRO'];
+/** Nombre corto del servicio; en «Otro», el que escribió el usuario. */
+function cortoServicio(s) { if (s.tipo === 'OTRO' && s.datos && s.datos.nombreOtro) return s.datos.nombreOtro; return (TIPOS[s.tipo] || TIPOS.OTRO).corto; }
 
 const RESULTADOS_PIPC = {
   pendiente: 'En espera de resolución',
@@ -161,6 +170,17 @@ function etapasServicio(s) {
       { k: 'ingreso', t: 'Ingreso de la solicitud con el PIPC (1er trimestre)' },
       { k: 'obtenido', t: 'Visto Bueno obtenido y entregado al cliente' }
     ];
+    case 'PAE': return [
+      { k: 'levantamiento', t: 'Levantamiento y recolección de información del establecimiento' },
+      { k: 'elaboracion', t: 'Elaboración del Plan de Atención de Emergencias' },
+      { k: 'revision', t: 'Revisión y validación con el cliente' },
+      { k: 'entrega', t: 'Entrega del plan al cliente' }
+    ];
+    case 'DICTAMEN': return [
+      { k: 'visita', t: 'Visita e inspección del establecimiento' },
+      { k: 'elaboracion', t: 'Elaboración del dictamen' },
+      { k: 'entrega', t: 'Entrega del dictamen al cliente' }
+    ];
     default: return [];
   }
 }
@@ -175,7 +195,7 @@ function etapaHecha(obj, et) { return et.auto ? !!et.hecho : !!(obj.etapas && ob
 
 /** Porcentaje de avance (0–100) de un servicio. */
 function avanceServicio(s, eventos) {
-  if (s.tipo === 'STPS') return Math.max(0, Math.min(100, +((s.datos || {}).avance) || 0));
+  if (TIPOS_AVANCE_LIBRE.indexOf(s.tipo) >= 0) return Math.max(0, Math.min(100, +((s.datos || {}).avance) || 0));
   const et = etapasServicio(s);
   let hechas = et.filter(e => etapaHecha(s, e)).length, total = et.length;
   if (s.tipo === 'SIMULACROS' || s.tipo === 'CAPACITACIONES') {
@@ -367,8 +387,8 @@ function calcularAvisos(db, hoy, conPagos) {
     db.cobros.forEach(c => {
       const s = db.servicios.find(x => x.id === c.id); if (!s) return;
       const r = resumenCobro(c);
-      if (r.porFacturar > 0.009) out.push({ nivel: 'ambar', titulo: 'Factura pendiente de emitir', detalle: quien(s) + ' · ' + TIPOS[s.tipo].corto + ': ' + dinero(r.porFacturar) + ' pagado sin facturar.', servicioId: s.id, fecha: hoy, para: 'directora', clave: 'fact' });
-      if (r.saldo > 0.009 && avanceServicio(s, db.eventos) >= 100) out.push({ nivel: 'ambar', titulo: 'Servicio concluido con saldo pendiente', detalle: quien(s) + ' · ' + TIPOS[s.tipo].corto + ': saldo ' + dinero(r.saldo) + '.', servicioId: s.id, fecha: hoy, para: 'directora', clave: 'saldo' });
+      if (r.porFacturar > 0.009) out.push({ nivel: 'ambar', titulo: 'Factura pendiente de emitir', detalle: quien(s) + ' · ' + cortoServicio(s) + ': ' + dinero(r.porFacturar) + ' pagado sin facturar.', servicioId: s.id, fecha: hoy, para: 'directora', clave: 'fact' });
+      if (r.saldo > 0.009 && avanceServicio(s, db.eventos) >= 100) out.push({ nivel: 'ambar', titulo: 'Servicio concluido con saldo pendiente', detalle: quien(s) + ' · ' + cortoServicio(s) + ': saldo ' + dinero(r.saldo) + '.', servicioId: s.id, fecha: hoy, para: 'directora', clave: 'saldo' });
     });
   }
 
