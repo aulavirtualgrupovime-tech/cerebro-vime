@@ -229,7 +229,7 @@ const Docs = (() => {
       const i = x.inm;
       b.push(k.seccion((n + 2) + '.  ' + i.nombreComercial));
       b.push(k.campo('Dirección', i.direccion));
-      b.push(k.P([k.T('Clasificación del riesgo:  ', { bold: true }), k.T(i.riesgo === 'alto' ? 'Riesgo alto' : 'Riesgo ordinario'), k.T('        NRPC:  ', { bold: true }), k.T(i.nrpc || 'No aplica'), k.T('        Aforo:  ', { bold: true }), k.T(i.aforo || '—')]));
+      b.push(k.P([k.T('Clasificación del riesgo:  ', { bold: true }), k.T(i.riesgo === 'alto' ? 'Riesgo alto' : i.riesgo ? 'Riesgo ordinario' : 'Por definir'), k.T('        NRPC:  ', { bold: true }), k.T(i.nrpc || 'No aplica'), k.T('        Aforo:  ', { bold: true }), k.T(i.aforo || '—')]));
       if (!x.servicios.length) b.push(k.P([k.T('Sin servicios contratados en este ejercicio.', { color: GRIS })]));
       x.servicios.forEach(s => {
         b.push(sub(s.nombre + '  ·  ' + s.avance + ' %  (' + s.estado + ')'));

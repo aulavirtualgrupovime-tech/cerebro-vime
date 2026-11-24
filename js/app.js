@@ -12,6 +12,8 @@
   const servicio = id => porId('servicios', id);
   const nombreCli = c => c.nombreComercial || c.razonSocial || '(sin nombre)';
   const cadena = s => { const i = inmueble(s.inmuebleId); const c = cliente(i.clienteId); return { i, c }; };
+  /** Razón social y RFC que aplican a un servicio: los del establecimiento si tiene propios; si no, los del cliente. */
+  const empresaDe = s => { const { i, c } = cadena(s || {}); return { razonSocial: i.razonSocial || c.razonSocial || '', rfc: String(i.rfc || (i.razonSocial ? '' : c.rfc) || '').toUpperCase() }; };
   const quienEvento = ev => { const s = servicio(ev.servicioId) || {}; const { i, c } = cadena(s); return nombreCli(c) + ' · ' + (i.nombreComercial || ''); };
   const avance = s => avanceServicio(s, DB.eventos);
   const tituloEvento = ev => ev.clase === 'simulacro' ? 'Simulacro' + (ev.hipotesis ? ': ' + ev.hipotesis : '') + (TIPOS_SIMULACRO.indexOf(ev.tipoSimulacro) >= 0 ? ' (' + ev.tipoSimulacro.toLowerCase() + ')' : '') : (ev.curso || 'Capacitación');
@@ -22,7 +24,7 @@
   function promedio(arr) { return arr.length ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length) : 0; }
   function nombreServicio(s) {
     let n = TIPOS[s.tipo].nombre;
-    if (s.tipo === 'PIPC') n += ' · riesgo ' + (s.modalidad || inmueble(s.inmuebleId).riesgo || '');
+    if (s.tipo === 'PIPC') n += ' · riesgo ' + (s.modalidad || inmueble(s.inmuebleId).riesgo || 'por definir');
     if (s.tipo === 'STPS' && s.datos && s.datos.servicioStps) n += ' · ' + s.datos.servicioStps;
     return n;
   }
@@ -153,6 +155,62 @@
       sinc(''); refrescarDB(); toast('Clientes unidos: ' + inms.length + ' establecimiento(s) movido(s)');
     } catch (e) { sinc(''); toast(e.message, true); refrescarDB(); }
   }
+  /* ---------- Importar la lista de inmuebles (Excel) ---------- */
+  function importarClientes() {
+    if (!Datos.esDirectora()) return;
+    abrirModal('Importar clientes y establecimientos', '<div class="form"><div class="campo ancho"><label>Lista de inmuebles en Excel (.xlsx)</label><input type="file" id="impCliArch" accept=".xlsx"><span class="ayuda">Columnas: NRPC, RAZON SOCIAL, RFC, NOMBRE COMERCIAL, DIRECCION y TIPO DE RIESGO. Primero se muestra lo que se va a guardar; nada se guarda hasta que usted lo confirme.</span></div><div class="campo ancho" id="impCliVista"></div><div class="error-form" id="impCliErr" hidden></div><div class="form-pie"><button type="button" class="btn sec" data-acc="cerrarModal">Cancelar</button><button type="button" class="btn" id="impCliOk" disabled>Guardar</button></div></div>');
+    document.querySelector('.modal').classList.add('ancha');
+    const K = claveRazon, caja = $('#impCliVista'), ok = $('#impCliOk'), err = $('#impCliErr'); let lista = [], ocupado = false;
+    const mostrarErr = t => { err.textContent = t; err.hidden = !t; };
+    const destinoDe = n => { const e = caja.querySelector('[data-dest="' + n + '"]'); return e && e.value ? porId('clientes', e.value) : null; };
+    const inmsDe = c => c ? DB.inmuebles.filter(i => i.clienteId === c.id) : [];
+    function pintarInms(n) {
+      const c = lista[n], d = destinoDe(n), reg = inmsDe(d);
+      caja.querySelector('[data-inms="' + n + '"]').innerHTML = c.inmuebles.map(i => {
+        const previo = ImportarClientes.inmuebleExistente(i, c.inmuebles, reg, K);
+        const falta = [!i.direccion && 'dirección', !i.riesgo && 'tipo de riesgo', !i.rfc && 'RFC'].filter(Boolean);
+        return '<div style="padding:4px 0;border-top:1px solid #EEF1F5"><b>' + esc(i.nombreComercial) + '</b> <span class="etiqueta borde" style="color:' + (previo ? 'var(--ambar)' : 'var(--verde)') + '">' + (previo ? 'Ya existe: solo se llena lo vacío' : 'Nuevo') + '</span><div class="sub">' + esc(i.direccion || 'Sin dirección') + ' · Riesgo ' + esc(i.riesgo || 'por definir') + (i.nrpc ? ' · NRPC ' + esc(i.nrpc) : '') + (c.grupo ? '<br>' + esc(i.razonSocial) + (i.rfc ? ' · ' + esc(i.rfc) : '') : '') + (falta.length ? '<br><span style="color:var(--ambar)">En la lista falta: ' + falta.join(', ') + '</span>' : '') + '</div></div>';
+      }).join('');
+    }
+    function contar() { const el = lista.filter((c, n) => caja.querySelector('[data-si="' + n + '"]').checked); ok.disabled = ocupado || !el.length; ok.textContent = 'Guardar ' + el.length + ' cliente(s) con ' + el.reduce((a, c) => a + c.inmuebles.length, 0) + ' establecimiento(s)'; }
+    $('#impCliArch').addEventListener('change', async e => {
+      const f = e.target.files[0]; if (!f) return; mostrarErr(''); ok.disabled = true; caja.innerHTML = '<p class="sub">Leyendo…</p>';
+      try {
+        await scriptUnaVez('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js');
+        const wb = XLSX.read(await f.arrayBuffer(), { type: 'array' });
+        lista = ImportarClientes.deFilas(XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: false, blankrows: true }), K);
+        if (!lista.length) throw new Error('La lista no tiene establecimientos.');
+        const orden = DB.clientes.slice().sort((a, b) => nombreCli(a).localeCompare(nombreCli(b)));
+        caja.innerHTML = lista.map((c, n) => {
+          const ex = ImportarClientes.clienteExistente(c, DB.clientes, K);
+          return '<div class="tarjeta" style="margin:8px 0;padding:10px 12px"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><input type="checkbox" data-si="' + n + '" checked><input data-nom="' + n + '" value="' + esc(c.nombreComercial) + '" style="flex:1;min-width:200px;font-weight:700" title="Nombre del cliente en la app"><select data-dest="' + n + '" style="max-width:280px"><option value="">Crear cliente nuevo</option>' + orden.map(o => '<option value="' + esc(o.id) + '"' + (ex && ex.id === o.id ? ' selected' : '') + '>Agregar a: ' + esc(nombreCli(o)) + '</option>').join('') + '</select></div><div class="sub">' + esc(c.razonSocial) + (c.rfc ? ' · ' + esc(c.rfc) : '') + ' · ' + c.inmuebles.length + ' establecimiento(s)</div><div data-inms="' + n + '"></div></div>';
+        }).join('');
+        lista.forEach((c, n) => { pintarInms(n); caja.querySelector('[data-dest="' + n + '"]').addEventListener('change', () => pintarInms(n)); caja.querySelector('[data-si="' + n + '"]').addEventListener('change', contar); });
+        contar();
+      } catch (ex) { lista = []; caja.innerHTML = ''; mostrarErr(ex.message); }
+    });
+    ok.addEventListener('click', async () => {
+      if (ocupado) return; ocupado = true; ok.disabled = true; mostrarErr('');
+      const tareas = lista.map((c, n) => ({ c, si: caja.querySelector('[data-si="' + n + '"]').checked, nom: caja.querySelector('[data-nom="' + n + '"]').value.trim() || c.nombreComercial, destino: destinoDe(n) })).filter(t => t.si);
+      caja.querySelectorAll('input,select').forEach(x => { x.disabled = true; }); $('#impCliArch').disabled = true;
+      const total = tareas.reduce((a, t) => a + t.c.inmuebles.length, 0); let hechos = 0, nuevosC = 0, nuevosI = 0, completados = 0, iguales = 0;
+      try {
+        for (const t of tareas) {
+          // si se reintenta después de una falla, el cliente recién creado ya existe y no se repite
+          let cli = t.destino || DB.clientes.find(x => x.id === t.c.idGuardado);
+          if (!cli) { cli = await Datos.guardar('clientes', { razonSocial: t.c.razonSocial, nombreComercial: t.nom, rfc: t.c.rfc, notas: '' }); t.c.idGuardado = cli.id; nuevosC++; DB = Datos.vista(); }
+          for (const i of t.c.inmuebles) {
+            ok.textContent = 'Guardando ' + (++hechos) + ' de ' + total + '… no cierre';
+            const previo = ImportarClientes.inmuebleExistente(i, t.c.inmuebles, inmsDe(cli), K), reg = ImportarClientes.registro(i, previo, cli, K);
+            if (!reg) { iguales++; continue; }
+            await Datos.guardar('inmuebles', reg); DB = Datos.vista(); if (previo) completados++; else nuevosI++;
+          }
+        }
+        refrescarDB(); cerrarModal(); location.hash = '#/clientes';
+        toast(nuevosC + ' cliente(s) y ' + nuevosI + ' establecimiento(s) nuevos' + (completados ? ', ' + completados + ' completados' : '') + (iguales ? ', ' + iguales + ' sin cambios' : ''));
+      } catch (ex) { ocupado = false; refrescarDB(); mostrarErr('Se detuvo: ' + ex.message + ' Lo guardado hasta aquí se conserva; presione de nuevo para continuar sin repetir.'); ok.disabled = false; ok.textContent = 'Continuar'; }
+    });
+  }
   function formCliente(c) {
     formulario(c ? 'Editar cliente' : 'Nuevo cliente', CAMPOS_CLIENTE, c, async d => {
       d.rfc = (d.rfc || '').toUpperCase().replace(/[\s-]/g, '');
@@ -170,6 +228,8 @@
 
   const CAMPOS_INMUEBLE = [
     { k: 'nombreComercial', t: 'Nombre comercial del inmueble', req: true, ancho: true },
+    { k: 'razonSocial', t: 'Razón social del establecimiento', ayuda: 'Solo si es distinta a la del cliente' },
+    { k: 'rfc', t: 'RFC del establecimiento', ayuda: 'Solo si es distinto al del cliente' },
     { k: 'direccion', t: 'Dirección', ancho: true },
     { k: 'nrpc', t: 'NRPC (si aplica)', ayuda: 'Número de Registro de Protección Civil' },
     { k: 'riesgo', t: 'Tipo de riesgo', tipo: 'select', opciones: [{ v: 'ordinario', t: 'Ordinario' }, { v: 'alto', t: 'Alto' }], req: true },
@@ -461,12 +521,12 @@
   function vistaClientes() {
     titulo('Clientes');
     const f = estado.filtroClientes.toLowerCase();
-    const lista = DB.clientes.filter(c => !f || [c.razonSocial, c.nombreComercial, c.rfc].concat(DB.inmuebles.filter(i => i.clienteId === c.id).map(i => i.nombreComercial)).join(' ').toLowerCase().includes(f))
+    const lista = DB.clientes.filter(c => !f || [c.razonSocial, c.nombreComercial, c.rfc].concat(DB.inmuebles.filter(i => i.clienteId === c.id).map(i => i.nombreComercial + ' ' + (i.razonSocial || '') + ' ' + (i.rfc || ''))).join(' ').toLowerCase().includes(f))
       .sort((a, b) => nombreCli(a).localeCompare(nombreCli(b)));
     const rep = gruposRepetidos();
     return (rep.length ? '<div class="tarjeta" style="border-left:4px solid var(--ambar)"><h3>Clientes registrados más de una vez (' + rep.length + ')</h3><p class="sub">Tienen el mismo RFC o la misma razón social. Abra uno y use «Unir aquí» para dejar un solo registro con todos sus establecimientos.</p>' +
       rep.map(g => '<div class="fila clic" data-acc="ir" data-h="#/cliente/' + g[0].id + '"><div class="crece"><b>' + esc(nombreCli(g[0])) + '</b><div class="sub">' + g.length + ' registros · ' + g.map(c => DB.inmuebles.filter(i => i.clienteId === c.id).length + ' establecimiento(s)').join(' + ') + '</div></div><span class="btn sec chico">Revisar</span></div>').join('') + '</div>' : '') +
-      '<div class="tarjeta"><div class="tarjeta-cab"><input class="buscador" id="buscarCliente" placeholder="Buscar cliente, RFC o inmueble…" value="' + esc(estado.filtroClientes) + '"><button class="btn" data-acc="nuevoCliente">+ Nuevo cliente</button></div>' +
+      '<div class="tarjeta"><div class="tarjeta-cab"><input class="buscador" id="buscarCliente" placeholder="Buscar cliente, RFC o inmueble…" value="' + esc(estado.filtroClientes) + '"><div style="display:flex;gap:8px;flex-wrap:wrap">' + (Datos.esDirectora() ? '<button class="btn sec" data-acc="importarClientes">⬆ Importar lista de Excel</button>' : '') + '<button class="btn" data-acc="nuevoCliente">+ Nuevo cliente</button></div></div>' +
       '<div class="lista">' + (lista.length ? lista.map(c => {
         const inms = DB.inmuebles.filter(i => i.clienteId === c.id);
         const serv = DB.servicios.filter(s => inms.some(i => i.id === s.inmuebleId) && +s.ejercicio === estado.ejercicio);
@@ -493,7 +553,7 @@
       (inms.length ? inms.map(i => {
         const serv = DB.servicios.filter(s => s.inmuebleId === i.id && +s.ejercicio === estado.ejercicio);
         const av = promedio(serv.map(avance));
-        return '<div class="fila clic" data-acc="ir" data-h="#/inmueble/' + i.id + '"><div class="crece"><b>' + esc(i.nombreComercial) + '</b> <span class="etiqueta borde" style="color:' + (i.riesgo === 'alto' ? 'var(--rojo)' : 'var(--verde)') + '">Riesgo ' + esc(i.riesgo) + '</span><div class="sub">' + esc(i.direccion || '') + '</div><div class="chips" style="margin-top:5px">' + serv.map(s => etiquetaTipo(s.tipo)).join('') + '</div></div><div style="width:120px">' + barra(av) + '</div><div class="avance-num">' + av + '%</div></div>';
+        return '<div class="fila clic" data-acc="ir" data-h="#/inmueble/' + i.id + '"><div class="crece"><b>' + esc(i.nombreComercial) + '</b> <span class="etiqueta borde" style="color:' + (i.riesgo === 'alto' ? 'var(--rojo)' : i.riesgo ? 'var(--verde)' : 'var(--ambar)') + '">Riesgo ' + esc(i.riesgo || 'por definir') + '</span><div class="sub">' + esc(i.direccion || '') + '</div><div class="chips" style="margin-top:5px">' + serv.map(s => etiquetaTipo(s.tipo)).join('') + '</div></div><div style="width:120px">' + barra(av) + '</div><div class="avance-num">' + av + '%</div></div>';
       }).join('') : '<div class="vacio">Agregue el primer establecimiento de este cliente.</div>') + '</div></div>';
   }
 
@@ -510,7 +570,7 @@
     const num = n => (n === '' || n == null) ? '—' : (+n).toLocaleString('es-MX');
     return '<div class="migas"><a href="#/clientes">Clientes</a> › <a href="#/cliente/' + c.id + '">' + esc(nombreCli(c)) + '</a> › ' + esc(i.nombreComercial) + '</div>' +
       '<div class="tarjeta"><div class="tarjeta-cab"><h2>' + esc(i.nombreComercial) + '</h2><button class="btn sec chico" data-acc="editarInmueble" data-id="' + id + '">Editar</button></div><div class="datos">' +
-      [['Dirección', i.direccion], ['NRPC', i.nrpc || 'No aplica'], ['Tipo de riesgo', i.riesgo === 'alto' ? 'Alto' : 'Ordinario'], ['m² de superficie', num(i.m2Superficie)], ['m² de construcción', num(i.m2Construccion)], ['Aforo', num(i.aforo)], ['Contacto', i.contactoNombre], ['Teléfono', i.contactoTel]]
+      (i.razonSocial ? [['Razón social', i.razonSocial]] : []).concat(i.rfc ? [['RFC', i.rfc]] : [], [['Dirección', i.direccion], ['NRPC', i.nrpc || 'No aplica'], ['Tipo de riesgo', i.riesgo === 'alto' ? 'Alto' : i.riesgo ? 'Ordinario' : 'Por definir'], ['m² de superficie', num(i.m2Superficie)], ['m² de construcción', num(i.m2Construccion)], ['Aforo', num(i.aforo)], ['Contacto', i.contactoNombre], ['Teléfono', i.contactoTel]])
         .map(x => '<div class="dato"><small>' + x[0] + '</small><div>' + esc(x[1] || '—') + '</div></div>').join('') + '</div></div>' +
       '<div class="tarjeta"><div class="tarjeta-cab"><h3>Servicios contratados · ejercicio ' + selectorEjercicio() + '</h3><div style="display:flex;gap:8px;flex-wrap:wrap">' +
       (serv.length ? '<button class="btn sec chico" data-acc="copiarEjercicio" data-id="' + id + '">Copiar al ejercicio ' + (estado.ejercicio + 1) + '</button>' : '') +
@@ -1255,6 +1315,7 @@
     ir: el => { location.hash = el.dataset.h; },
     irPagos: () => { estado.pestanaServicio = 'pagos'; },
     nuevoCliente: () => formCliente(),
+    importarClientes: () => importarClientes(),
     nuevoCurso: () => formCurso(),
     editarCurso: el => formCurso(cursoPorId(el.dataset.id)),
     nuevoInstructor: () => formInstructor(),
@@ -1588,7 +1649,7 @@
   function formCurso(cu, pre) {
     const servs = DB.servicios.filter(s => s.tipo === 'CAPACITACIONES' && !s.archivado);
     const val = Object.assign({ modalidad: 'Presencial', instructorId: (instructores()[0] || {}).id || '', tipoConstancia: 'individual', aplicaDC3: 'si', leyendaEmpresa: 'El personal brigadista de', repLegalEstado: 'aplica', repTrabEstado: 'aplica', areaTematica: '6000' }, pre || {}, cu || {});
-    if (!val.rfcEmpresa && val.servicioId) { const { c } = cadena(servicio(val.servicioId) || {}); val.rfcEmpresa = (c && c.rfc) || ''; }
+    if (!val.rfcEmpresa && val.servicioId) val.rfcEmpresa = empresaDe(servicio(val.servicioId)).rfc;
     const campos = [
       { k: 'curso', t: 'Nombre del curso', req: true, ancho: true },
       { k: 'prefijoFolio', t: 'Prefijo del folio', ayuda: 'Se imprime tal cual, seguido de -001, -002… Ej.: GV.FB2026 → GV.FB2026-001. Si lo deja vacío: AV.{clave}{año}.' },
@@ -1618,7 +1679,7 @@
       v.prefijoFolio = String(v.prefijoFolio || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/[^A-Z0-9.\-]/g, '').replace(/^[.\-]+|[.\-]+$/g, '').slice(0, 24);
       if (v.fechaFin && v.fechaFin < v.fechaInicio) return { error: 'La fecha de término es anterior a la de inicio.' };
       v.rfcEmpresa = String(v.rfcEmpresa || '').toUpperCase().replace(/[\s-]/g, '');
-      if (!v.rfcEmpresa && v.servicioId) { const { c } = cadena(servicio(v.servicioId)); v.rfcEmpresa = String((c && c.rfc) || '').toUpperCase(); }
+      if (!v.rfcEmpresa && v.servicioId) v.rfcEmpresa = empresaDe(servicio(v.servicioId)).rfc;
       if (v.repLegalEstado !== 'aplica') v.repLegal = '';
       if (v.repTrabEstado !== 'aplica') v.repTrab = '';
       if (v.aplicaDC3 !== 'no') {
@@ -1634,7 +1695,7 @@
         reasignar = true;
       }
       if (cu && tieneFolios(cu) && v.tipoConstancia !== (cu.tipoConstancia || 'individual')) return { error: 'Ya hay folios emitidos; no se puede cambiar el tipo de constancia de este curso.' };
-      if (!v.empresa && v.servicioId) { const { c } = cadena(servicio(v.servicioId)); v.empresa = c.razonSocial || ''; }
+      if (!v.empresa && v.servicioId) v.empresa = empresaDe(servicio(v.servicioId)).razonSocial;
       if (v.tipoConstancia === 'empresa' && !v.empresa) return { error: 'Para la constancia de toda la empresa escriba la razón social.' };
       if (cu && cu.folioEmpresa && (v.empresa !== cu.empresa || v.leyendaEmpresa !== cu.leyendaEmpresa)) return { error: 'La constancia de la empresa ya tiene folio con esa razón social y leyenda; no se pueden cambiar.' };
       v.leyendaEmpresa = v.leyendaEmpresa || 'El personal brigadista de';
@@ -1660,7 +1721,7 @@
           ver('repTrab', dc3 && $('#f_repTrabEstado').value === 'aplica');
         };
         ['aplicaDC3', 'repLegalEstado', 'repTrabEstado'].forEach(k => $('#f_' + k).addEventListener('change', ajustar));
-        $('#f_servicioId').addEventListener('change', e => { const s = servicio(e.target.value); if (s && !$('#f_rfcEmpresa').value) { const { c } = cadena(s); $('#f_rfcEmpresa').value = (c && c.rfc) || ''; } });
+        $('#f_servicioId').addEventListener('change', e => { const s = servicio(e.target.value); if (s && !$('#f_rfcEmpresa').value) $('#f_rfcEmpresa').value = empresaDe(s).rfc; });
         ajustar();
       }
     }, cu && !tieneFolios(cu) ? { borrar: async () => { await borrar('cursos', cu.id, 'Curso eliminado'); location.hash = '#/capacitaciones'; }, borrarPregunta: '¿Eliminar este curso y su lista de participantes?' } : {}));
@@ -1955,7 +2016,7 @@
     if (ya) { location.hash = '#/curso/' + ya.id; return; }
     const s = servicio(ev.servicioId) || {}; const { c } = s.id ? cadena(s) : { c: {} };
     const mod = MODALIDADES.find(m => norm(m) === norm(ev.modalidad)) || (/l[ií]nea/i.test(ev.modalidad || '') ? 'En línea' : /h[ií]brid|mixt/i.test(ev.modalidad || '') ? 'Mixta' : 'Presencial');
-    formCurso(null, { curso: ev.curso || '', modalidad: mod, fechaInicio: ev.fecha, fechaFin: ev.fecha, horas: ev.cargaHoraria || '', servicioId: ev.servicioId || '', eventoId: ev.id, empresa: c.razonSocial || '' });
+    formCurso(null, { curso: ev.curso || '', modalidad: mod, fechaInicio: ev.fecha, fechaFin: ev.fecha, horas: ev.cargaHoraria || '', servicioId: ev.servicioId || '', eventoId: ev.id, empresa: empresaDe(servicio(ev.servicioId)).razonSocial });
   }
 
   /* Cambios en casillas, fechas y selectores */
