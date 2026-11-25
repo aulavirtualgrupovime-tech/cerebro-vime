@@ -1298,7 +1298,7 @@
 
   /* ---------- Constancias ya emitidas de un curso, en un solo PDF ---------- */
   async function verConstancias(cuId) {
-    const cu = cursoPorId(cuId); const ins = instructorDe(cu.instructorId);
+    const cu = cursoPorId(cuId); const ins = instructorCurso(cu);
     if (!ins) { toast('Asigne un capacitador al curso.', true); return; }
     const ps = esEmpresa(cu)
       ? (cu.folioEmpresa && (registroDe(cu.folioEmpresa) || {}).estado !== 'cancelada' ? [{ folio: cu.folioEmpresa, leyenda: cu.leyendaEmpresa || 'El personal brigadista de', empresa: cu.empresa }] : [])
@@ -1340,6 +1340,7 @@
     reutilizarLista: el => reutilizarLista(el.dataset.id),
     editarCurso: el => formCurso(cursoPorId(el.dataset.id)),
     nuevoInstructor: () => formInstructor(),
+    actualizarCapacitador: el => actualizarCapacitador(el.dataset.id),
     editarInstructor: el => formInstructor(instructorDe(el.dataset.id)),
     importarLista: el => dialogoLista(el.dataset.id),
     nuevoParticipante: el => formParticipante(el.dataset.id),
@@ -1518,8 +1519,49 @@
   /* ======================= Capacitaciones: cursos, participantes y constancias ======================= */
   const MODALIDADES = ['Presencial', 'En línea', 'Mixta'];
   const regAjuste = id => (DB.ajustes || []).find(x => x.id === id);
-  function instructores() { return (regAjuste('instructores') || {}).lista || []; }
-  function instructorDe(id) { return instructores().find(x => x.id === id) || null; }
+  // Los retirados (y las firmas reemplazadas) se conservan ocultos: los cursos ya emitidos los necesitan para reimprimir
+  function instructoresTodos() { return (regAjuste('instructores') || {}).lista || []; }
+  function instructores() { return instructoresTodos().filter(x => !x.archivado); }
+  function instructorDe(id) { return instructoresTodos().find(x => x.id === id) || null; }
+  const nombreIns = x => x ? ((x.titulo || '') + ' ' + (x.nombre || '')).trim() : '';
+  const anioCurso = cu => String(cu.fechaFin || cu.fechaInicio || hoyISO()).slice(0, 4);
+  /** Registros que aplican en un año: los de ese año y, si una casilla está vacía, los generales. */
+  function registrosDe(ins, anio) { const g = ins.registros || [], a = (ins.registrosAnio || {})[anio] || []; return [0, 1].map(k => a[k] || g[k] || ''); }
+  /** El capacitador maneja registros por año y falta el de ese año. */
+  function faltaRegistroAnio(ins, anio) { const R = ins.registrosAnio || {}; return Object.keys(R).length > 0 && !R[anio]; }
+  /** Copia fija del capacitador para un curso: es lo que se imprime aunque después cambie su ficha. */
+  function fotoInstructor(ins, cu) {
+    const o = { id: ins.id, titulo: ins.titulo || '', nombre: ins.nombre || '', cargo: ins.cargo || '', registros: registrosDe(ins, anioCurso(cu)), fijado: hoyISO() };
+    if (ins.firmaDriveId) o.firmaDriveId = ins.firmaDriveId; if (ins.firmaData) o.firmaData = ins.firmaData;
+    return o;
+  }
+  /** Capacitador con el que sale un curso: el fijado al emitir o, si aún no se emite, su ficha actual con los registros del año del curso. */
+  function instructorCurso(cu) {
+    if (cu.instructorFijo) return cu.instructorFijo;
+    const ins = instructorDe(cu.instructorId); return ins ? Object.assign({}, ins, { registros: registrosDe(ins, anioCurso(cu)) }) : null;
+  }
+  const cursoEmitido = cu => tieneFolios(cu) || !!cu.generadas || !!cu.dc3Generadas;
+  /** Curso con los datos del capacitador fijados (si ya lo estaban, no cambian). */
+  function conFoto(cu) { if (cu.instructorFijo) return cu; const ins = instructorDe(cu.instructorId); return ins ? Object.assign({}, cu, { instructorFijo: fotoInstructor(ins, cu) }) : cu; }
+  /** Antes de cambiar o retirar un capacitador: fija sus datos actuales en los cursos ya emitidos que aún no los tenían. */
+  async function fijarCursosDe(insId) {
+    await Datos.cargar(); DB = Datos.vista();
+    const l = (DB.cursos || []).filter(c => c.instructorId === insId && cursoEmitido(c) && !c.instructorFijo);
+    for (const c of l) await Datos.guardar('cursos', conFoto(c));
+    DB = Datos.vista(); return l.length;
+  }
+  async function actualizarCapacitador(cuId) {
+    const cu = cursoPorId(cuId), ins = instructorDe(cu.instructorId); if (!ins) return;
+    const n = fotoInstructor(ins, cu), f = cu.instructorFijo || {};
+    if (!confirm('Las constancias de este curso se reimprimirán con los datos ACTUALES del capacitador para ' + anioCurso(cu) + ':\n\n' + nombreIns(n) + '\n' + (n.registros.filter(Boolean).join('\n') || 'Sin registros') + '\n\nAhora tienen:\n' + nombreIns(f) + '\n' + ((f.registros || []).filter(Boolean).join('\n') || 'Sin registros') + '\n\nÚselo solo para corregir un error. ¿Continuar?')) return;
+    try { await cambiarNombreValidacion(cu, nombreIns(n)); await guardar('cursos', Object.assign({}, cu, { instructorFijo: n }), 'Datos del capacitador actualizados en este curso'); } catch (e) { toast(e.message, true); }
+  }
+  /** La página pública de validación debe mostrar el mismo capacitador que la constancia. */
+  async function cambiarNombreValidacion(cu, nombre) {
+    const fs = (cu.folioEmpresa ? [cu.folioEmpresa] : []).concat((cu.participantes || []).map(p => p.folio).filter(Boolean));
+    for (const f of fs) { const g = registroDe(f); if (g && g.instructor !== nombre) await Datos.guardar('constancias', Object.assign({}, g, { instructor: nombre })); }
+    DB = Datos.vista();
+  }
   async function guardarInstructores(lista, msg) { await guardar('ajustes', Object.assign({ id: 'instructores' }, regAjuste('instructores') || {}, { lista }), msg); }
   const cursoPorId = id => porId('cursos', id);
   function quienCurso(cu) {
@@ -1596,8 +1638,8 @@
           '<div class="sub">' + esc(quienCurso(cu)) + ' · ' + esc(fechaCorta(cu.fechaInicio)) + (cu.fechaFin && cu.fechaFin !== cu.fechaInicio ? ' al ' + esc(fechaCorta(cu.fechaFin)) : '') + ' · ' + esc(cu.modalidad || '') + ' · ' + esc(cu.horas || '—') + ' h · ' + ps.length + ' participante' + (ps.length === 1 ? '' : 's') + '</div></div></div>';
       }).join('') + '</div>' : '<div class="vacio">Aún no hay cursos. Cree uno con «+ Nuevo curso».</div>') + '</div></div>' +
       '<div><div class="tarjeta"><div class="tarjeta-cab"><h3>Capacitadores</h3><button class="btn chico" data-acc="nuevoInstructor">+ Agregar</button></div>' +
-      '<p class="sub">Nombre, registros y firma digital que se imprimen en la constancia (un capacitador por constancia).</p>' +
-      (instructores().length ? instructores().map(x => '<div class="fila"><div class="avatar">' + esc((x.nombre || '?')[0]) + '</div><div class="crece"><b>' + esc(((x.titulo || '') + ' ' + x.nombre).trim()) + '</b><div class="sub">' + esc((x.registros || []).filter(Boolean).join(' · ') || 'Sin registros') + '</div></div>' +
+      '<p class="sub">Nombre, registros y firma digital que se imprimen en la constancia (un capacitador por constancia). Si un registro se renueva cada año, agregue el nuevo en «Editar»: lo ya emitido no cambia.</p>' +
+      (instructores().length ? instructores().map(x => '<div class="fila"><div class="avatar">' + esc((x.nombre || '?')[0]) + '</div><div class="crece"><b>' + esc(((x.titulo || '') + ' ' + x.nombre).trim()) + '</b><div class="sub">' + esc(registrosDe(x, hoyISO().slice(0, 4)).filter(Boolean).join(' · ') || 'Sin registros') + (Object.keys(x.registrosAnio || {}).length ? '<br>Registros por año: ' + esc(Object.keys(x.registrosAnio).sort().join(', ')) : '') + '</div></div>' +
         ((x.firmaData || x.firmaDriveId) ? '<span class="etiqueta" style="background:var(--verde)">Firma ✓</span>' : '<span class="etiqueta" style="background:var(--rojo)">Sin firma</span>') +
         '<button class="btn sec chico" data-acc="editarInstructor" data-id="' + x.id + '">Editar</button></div>').join('') : '<div class="vacio">Agregue al menos un capacitador con su firma.</div>') + '</div>' +
       '<div class="tarjeta"><h3>Validación pública</h3><p class="sub">Cada constancia lleva un folio y un código QR. Cualquier persona puede escanearlo o abrir la página de validación y escribir el folio: verá el nombre, el curso, las fechas, las horas, el capacitador y si la constancia está vigente. La CURP nunca se muestra.</p>' +
@@ -1615,7 +1657,7 @@
   function vistaCurso(id) {
     const cu = cursoPorId(id); if (!cu) return '<div class="vacio">Curso no encontrado.</div>';
     titulo('Curso · ' + cu.curso);
-    const ins = instructorDe(cu.instructorId);
+    const ins = instructorCurso(cu), insAct = instructorDe(cu.instructorId);
     const ps = cu.participantes || [];
     const pend = ps.filter(p => !p.folio && !p.excluir);
     const dc3 = aplicaDC3(cu), emp = esEmpresa(cu);
@@ -1628,12 +1670,15 @@
       '<div class="tarjeta"><div class="tarjeta-cab"><div><span class="etiqueta" style="background:var(--azul)">Curso</span><h2 style="margin-top:8px">' + esc(cu.curso) + '</h2><div class="sub">' + esc(quienCurso(cu)) + '</div></div>' +
       '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn acento chico" data-acc="otroCurso" data-id="' + cu.id + '" title="Nuevo curso con los datos de esta empresa y sus participantes">♻ Otro curso para esta empresa</button><button class="btn sec chico" data-acc="editarCurso" data-id="' + cu.id + '">Editar</button></div></div>' +
       '<div class="datos">' + dato('Modalidad', esc(cu.modalidad || '—')) + dato('Fechas', esc(fechasCurso(cu) || '—')) + dato('Duración', esc(cu.horas || '—') + ' horas') +
-      dato('Sede', esc(cu.sede || '—')) + dato('Capacitador', ins ? esc(((ins.titulo || '') + ' ' + ins.nombre).trim()) + ((ins.firmaData || ins.firmaDriveId) ? '' : ' <span class="etiqueta" style="background:var(--rojo)">sin firma</span>') : '<span style="color:var(--rojo)">Sin asignar</span>') +
+      dato('Sede', esc(cu.sede || '—')) + dato('Capacitador', ins ? esc(nombreIns(ins)) + ((ins.firmaData || ins.firmaDriveId) ? '' : ' <span class="etiqueta" style="background:var(--rojo)">sin firma</span>') : '<span style="color:var(--rojo)">Sin asignar</span>') +
+      (ins ? dato('Registros que se imprimen', (ins.registros || []).filter(Boolean).map(esc).join('<br>') || '<span class="sub">Sin registros</span>') : '') +
+      (cu.instructorFijo ? dato('Datos del capacitador', '🔒 Fijados el ' + esc(fechaCorta(cu.instructorFijo.fijado)) + (insAct ? ' <button class="btn sec chico" data-acc="actualizarCapacitador" data-id="' + cu.id + '" title="Solo para corregir un error">Actualizar</button>' : '')) : '') +
       dato('Constancia de participación', emp ? 'Una para toda la empresa: «' + esc(textoEmpresa(cu)) + '»' : 'Una por participante') +
       dato('DC-3', dc3 ? '<b style="color:var(--verde)">APLICA</b>' : '<b style="color:var(--gris)">NO APLICA</b>') +
       (dc3 ? dato('Área temática', esc(((areasDC3().find(a => a[0] === cu.areaTematica) || [])[0] || '—') + ' ' + ((areasDC3().find(a => a[0] === cu.areaTematica) || [])[1] || ''))) + dato('Ocupación predeterminada', cu.ocupacionDefault ? esc(textoOcup(cu.ocupacionDefault)) : '<span class="sub">Ninguna (cada participante con la suya)</span>') + dato('RFC de la empresa', cu.rfcEmpresa ? esc(cu.rfcEmpresa) + (RFC_VALIDO.test(cu.rfcEmpresa) ? '' : ' <span class="etiqueta" style="background:var(--rojo)">revisar</span>') : '<span style="color:var(--rojo)">Falta</span>') +
         dato('Representante legal', textoRep(cu, 'repLegal')) + dato('Representante de los trabajadores', textoRep(cu, 'repTrab')) : '') +
       dato('Folios', esc(prefijoFolio(cu)) + (emp ? '-NNN (uno para la empresa)' : '-001, -002…')) + '</div>' +
+      (!cu.instructorFijo && insAct && faltaRegistroAnio(insAct, anioCurso(cu)) ? '<div class="aviso-it ambar" style="margin-top:12px;cursor:default"><div><b>Falta el registro ' + esc(anioCurso(cu)) + ' del capacitador</b><span>Captúrelo en Capacitaciones › Capacitadores antes de emitir; si no, se imprimirán sus registros generales.</span></div></div>' : '') +
       (faltaDC3(cu).length ? '<div class="aviso-it rojo" style="margin-top:12px;cursor:default"><div><b>Faltan datos para emitir las DC-3</b><span>Complete en «Editar»: ' + esc(faltaDC3(cu).join(', ')) + '.</span></div></div>' : '') + '</div>' +
       '<div class="tarjeta"><div class="tarjeta-cab"><h3>Participantes (' + ps.length + ')</h3><div style="display:flex;gap:8px;flex-wrap:wrap">' +
       '<button class="btn sec" data-acc="plantillaParticipantes" title="Plantilla para que el cliente llene los datos de sus trabajadores">⬇ Plantilla de Excel</button><button class="btn sec" data-acc="importarLista" data-id="' + cu.id + '">📥 Importar lista (Excel, Word o foto)</button><button class="btn sec" data-acc="reutilizarLista" data-id="' + cu.id + '" title="Copiar los participantes de otro curso ya registrado">♻ Reutilizar lista</button><button class="btn acento" data-acc="nuevoParticipante" data-id="' + cu.id + '">+ Agregar</button></div></div>' +
@@ -1727,7 +1772,7 @@
       { k: 'fechasTexto', t: 'Fechas como deben leerse (opcional)', ancho: true, ayuda: 'Solo si no fueron días seguidos. Ej.: «los días 25 al 29 de mayo y del 01 al 05 de junio de 2026».' },
       { k: 'horas', t: 'Duración total (horas)', tipo: 'number', req: true, min: 1, paso: 0.5 },
       { k: 'sede', t: 'Sede (si fue presencial)' },
-      { k: 'instructorId', t: 'Capacitador', tipo: 'select', req: true, opciones: [{ v: '', t: instructores().length ? 'Elija…' : 'Primero agregue un capacitador' }].concat(instructores().map(x => ({ v: x.id, t: ((x.titulo || '') + ' ' + x.nombre).trim() }))) },
+      { k: 'instructorId', t: 'Capacitador', tipo: 'select', req: true, opciones: [{ v: '', t: instructores().length ? 'Elija…' : 'Primero agregue un capacitador' }].concat(instructoresTodos().filter(x => !x.archivado || (cu && x.id === cu.instructorId)).map(x => ({ v: x.id, t: nombreIns(x) + (x.archivado ? ' (retirado)' : '') }))) },
       { k: 'servicioId', t: 'Cliente (servicio de capacitaciones)', tipo: 'select', opciones: [{ v: '', t: 'Grupo abierto / sin cliente' }].concat(servs.map(s => { const { i, c } = cadena(s); return { v: s.id, t: nombreCli(c) + ' · ' + (i.nombreComercial || '') + ' · ' + s.ejercicio }; })) },
       { k: 'empresa', t: 'Razón social de la empresa', ancho: true, ayuda: 'Se usa en la DC-3 y en la constancia para toda la empresa.' },
       { k: 'aplicaDC3', t: 'DC-3', tipo: 'select', opciones: [{ v: 'si', t: 'APLICA' }, { v: 'no', t: 'NO APLICA (solo constancia de participación)' }] },
@@ -1755,6 +1800,12 @@
         if (v.repLegalEstado === 'aplica' && !v.repLegal) return { error: 'Escriba el nombre del representante legal o elija NO APLICA / NO CUENTA.' };
         if (v.repTrabEstado === 'aplica' && !v.repTrab) return { error: 'Escriba el nombre del representante de los trabajadores o elija NO APLICA / NO CUENTA.' };
       }
+      let fijo = null;
+      if (cu && cursoEmitido(cu) && v.instructorId !== cu.instructorId) {
+        const n = instructorDe(v.instructorId); if (!n) return { error: 'Elija el capacitador.' };
+        if (!confirm('Este curso ya tiene constancias o DC-3 emitidas con ' + nombreIns(instructorCurso(cu)) + '.\n\nSi continúa, se reimprimirán con ' + nombreIns(n) + ' y la validación pública también cambiará. Deberá volver a generarlas e imprimirlas.\n\n¿Continuar?')) return { error: 'No se cambió el capacitador.' };
+        fijo = fotoInstructor(n, Object.assign({}, cu, v));
+      }
       let reasignar = false;
       if (cu && tieneFolios(cu) && prefijoFolio(Object.assign({}, cu, v)) !== prefijoFolio(cu)) {
         const n = cu.folioEmpresa ? 1 : (cu.participantes || []).filter(p => p.folio).length;
@@ -1769,13 +1820,13 @@
       if (reasignar) {
         const viejos = cu.folioEmpresa ? [cu.folioEmpresa] : cu.participantes.filter(p => p.folio).map(p => p.folio);
         for (const f of viejos) { const r = registroDe(f); if (r && r.estado !== 'cancelada') await Datos.guardar('constancias', Object.assign({}, r, { estado: 'cancelada', canceladaPor: Datos.usuario().nombre, fechaCancelacion: hoyISO(), motivo: 'Reemplazada por cambio de prefijo de folio' })); }
-        const limpio = Object.assign({}, cu, v, { folioEmpresa: '', generadas: '', participantes: (cu.participantes || []).map(p => Object.assign({}, p, { folio: '' })) });
+        const limpio = Object.assign({}, conFoto(Object.assign({}, cu, v, fijo ? { instructorFijo: fijo } : {})), { folioEmpresa: '', generadas: '', participantes: (cu.participantes || []).map(p => Object.assign({}, p, { folio: '' })) });
         const g = await guardar('cursos', limpio);
-        const ins = instructorDe(g.instructorId);
-        const r = await Datos.emitir(g, ins ? ((ins.titulo || '') + ' ' + ins.nombre).trim() : '');
+        const r = await Datos.emitir(g, nombreIns(g.instructorFijo));
         refrescarDB(); toast(viejos.length + ' folio(s) cancelado(s) y ' + r.nuevos.length + ' nuevo(s): ' + ((r.nuevos[0] || {}).folio || ''));
         return;
       }
+      if (fijo) { await cambiarNombreValidacion(cu, nombreIns(fijo)); v.instructorFijo = fijo; }
       const g = await guardar('cursos', Object.assign({ participantes: !cu && elegirPart ? elegirPart() : [] }, pre || {}, cu || {}, v), cu ? 'Curso actualizado' : 'Curso creado');
       if (!cu) location.hash = '#/curso/' + g.id;
     }, Object.assign({
@@ -1852,23 +1903,53 @@
       { k: 'titulo', t: 'Título (opcional)', ayuda: 'Ej.: Lic., Ing., Mtra.' },
       { k: 'nombre', t: 'Nombre completo', req: true },
       { k: 'cargo', t: 'Leyenda bajo el nombre', def: 'Capacitador' },
-      { k: 'reg1', t: 'Registro 1', ancho: true, ayuda: 'Ej.: Registro STPS (agente capacitador): XXXX-000000-XXX-0000' },
-      { k: 'reg2', t: 'Registro 2', ancho: true, ayuda: 'Ej.: Registro de Protección Civil: CEPC/RT/0000/2026' }
+      { k: 'reg1', t: 'Registro 1 (general)', ancho: true, ayuda: 'Ej.: Registro STPS (agente capacitador): XXXX-000000-XXX-0000' },
+      { k: 'reg2', t: 'Registro 2 (general)', ancho: true, ayuda: 'Ej.: Registro de Protección Civil: CEPC/RT/0000/2026. Si se renueva cada año, captúrelo abajo con su año.' }
     ];
     const val = Object.assign({}, ins || {}, { reg1: ((ins || {}).registros || [])[0] || '', reg2: ((ins || {}).registros || [])[1] || '' });
+    let anios = Object.keys((ins || {}).registrosAnio || {}).sort().map(a => ({ a, r: ins.registrosAnio[a].slice() }));
+    const leerAnios = () => { anios = Array.from(document.querySelectorAll('#insAnios [data-fila]')).map(f => ({ a: f.querySelector('[data-a]').value.trim(), r: [f.querySelector('[data-r1]').value.trim(), f.querySelector('[data-r2]').value.trim()] })); };
+    const pintarAnios = () => {
+      $('#insAnios').innerHTML = anios.map((x, k) => '<div data-fila="' + k + '" style="border:1px solid var(--gris-claro);border-radius:8px;padding:8px;margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center"><input data-a type="number" min="2020" max="2100" value="' + esc(x.a) + '" aria-label="Año" style="width:90px"><input data-r1 value="' + esc(x.r[0] || '') + '" placeholder="Registro 1 (vacío = el general)" style="flex:1;min-width:180px"><input data-r2 value="' + esc(x.r[1] || '') + '" placeholder="Registro 2 (vacío = el general)" style="flex:1;min-width:180px"><button type="button" class="btn-icono" data-quita="' + k + '" title="Quitar este año">✕</button></div>').join('');
+      $('#insAnios').querySelectorAll('[data-quita]').forEach(b => b.addEventListener('click', () => { leerAnios(); anios.splice(+b.dataset.quita, 1); pintarAnios(); }));
+    };
+    const usado = ins && (DB.cursos || []).some(c => c.instructorId === ins.id);
     formulario(ins ? 'Editar capacitador' : 'Nuevo capacitador', campos, val, async v => {
       const arch = $('#insFirma').files[0];
-      const nuevo = Object.assign({ id: (ins && ins.id) || Datos.nuevoId('ins') }, ins || {}, { titulo: v.titulo, nombre: v.nombre, cargo: v.cargo || 'Capacitador', registros: [v.reg1, v.reg2].filter(Boolean) });
+      leerAnios(); const registrosAnio = {};
+      for (const x of anios) {
+        if (!x.a && !x.r[0] && !x.r[1]) continue;
+        if (!/^20\d\d$/.test(x.a)) return { error: 'Escriba el año del registro con 4 dígitos.' };
+        if (registrosAnio[x.a]) return { error: 'El año ' + x.a + ' está repetido.' };
+        if (!x.r[0] && !x.r[1]) return { error: 'Escriba al menos un registro para ' + x.a + '.' };
+        registrosAnio[x.a] = x.r;
+      }
+      const nuevo = Object.assign({ id: (ins && ins.id) || Datos.nuevoId('ins') }, ins || {}, { titulo: v.titulo, nombre: v.nombre, cargo: v.cargo || 'Capacitador', registros: [v.reg1, v.reg2], registrosAnio });
+      if (!arch && !nuevo.firmaData && !nuevo.firmaDriveId) return { error: 'Suba la firma digital (imagen PNG, de preferencia con fondo transparente).' };
+      const fijados = ins ? await fijarCursosDe(ins.id) : 0;   // lo ya emitido conserva los datos anteriores
+      const extra = [];
       if (arch) {
         const png = await prepararFirma(arch);
         if (Datos.MODO_PRUEBA) nuevo.firmaData = await new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(png); });
         else { const f = new File([png], 'Firma_' + v.nombre.replace(/\s+/g, '_') + '.png', { type: 'image/png' }); const r = await Datos.subirArchivo(f, ['Capacitaciones', 'Firmas']); nuevo.firmaDriveId = r.driveId; nuevo.firmaUrl = r.url; delete nuevo.firmaData; }
-      } else if (!nuevo.firmaData && !nuevo.firmaDriveId) return { error: 'Suba la firma digital (imagen PNG, de preferencia con fondo transparente).' };
-      const lista = instructores().filter(x => x.id !== nuevo.id).concat([nuevo]);
-      await guardarInstructores(lista, 'Capacitador guardado');
-    }, Object.assign({ extraHtml: '<div class="campo ancho"><label>Firma digital' + (ins && (ins.firmaData || ins.firmaDriveId) ? ' (ya cargada; suba otra solo para reemplazarla)' : ' *') + '</label><input type="file" id="insFirma" accept="image/png,image/jpeg"><span class="ayuda">PNG o JPG (foto o escaneo). El fondo blanco se quita solo. Se imprime arriba del nombre en cada constancia.</span>' +
-      (ins && ins.firmaData ? '<img src="' + esc(ins.firmaData) + '" alt="Firma" style="max-height:70px;margin-top:6px;background:#fff;border:1px solid var(--gris-claro);border-radius:6px;padding:4px">' : '') + '</div>' },
-      ins ? { borrar: async () => guardarInstructores(instructores().filter(x => x.id !== ins.id), 'Capacitador eliminado'), borrarPregunta: '¿Eliminar este capacitador? Las constancias ya emitidas no cambian.' } : {}));
+        // la firma anterior se conserva (oculta) para poder reimprimir lo emitido con ella
+        if (ins && ins.firmaDriveId && ins.firmaDriveId !== nuevo.firmaDriveId) extra.push({ id: Datos.nuevoId('ins'), archivado: true, firmaAnteriorDe: ins.id, nombre: ins.nombre, firmaDriveId: ins.firmaDriveId });
+      }
+      const lista = instructoresTodos().filter(x => x.id !== nuevo.id).concat([nuevo], extra);
+      await guardarInstructores(lista, 'Capacitador guardado' + (fijados ? ' · ' + fijados + ' curso(s) emitido(s) conservan los datos anteriores' : ''));
+    }, Object.assign({ extraHtml: '<div class="campo ancho"><label>Registros por año</label><span class="ayuda">Para registros con vigencia anual. Cada curso imprime el de su año; si una casilla está vacía, usa el general. Agregue también el año en curso.</span><div id="insAnios"></div><div style="margin-top:8px"><button type="button" class="btn sec chico" id="insMasAnio">+ Agregar año</button></div></div>' +
+      '<div class="campo ancho"><label>Firma digital' + (ins && (ins.firmaData || ins.firmaDriveId) ? ' (ya cargada; suba otra solo para reemplazarla)' : ' *') + '</label><input type="file" id="insFirma" accept="image/png,image/jpeg"><span class="ayuda">PNG o JPG (foto o escaneo). El fondo blanco se quita solo. Se imprime arriba del nombre en cada constancia.</span>' +
+      (ins && ins.firmaData ? '<img src="' + esc(ins.firmaData) + '" alt="Firma" style="max-height:70px;margin-top:6px;background:#fff;border:1px solid var(--gris-claro);border-radius:6px;padding:4px">' : '') + '</div>' +
+      (ins ? '<div class="campo ancho"><span class="ayuda">🔒 Los cursos ya emitidos conservan el nombre, los registros y la firma con que se emitieron.</span></div>' : ''),
+      alAbrir: () => {
+        pintarAnios();
+        $('#insMasAnio').addEventListener('click', () => { leerAnios(); let a = +hoyISO().slice(0, 4); while (anios.some(x => +x.a === a)) a++; anios.push({ a: String(a), r: ['', ''] }); pintarAnios(); });
+      } },
+      ins ? { borrar: async () => {
+        if (!usado) { await guardarInstructores(instructoresTodos().filter(x => x.id !== ins.id), 'Capacitador eliminado'); return; }
+        await fijarCursosDe(ins.id);
+        await guardarInstructores(instructoresTodos().map(x => x.id === ins.id ? Object.assign({}, x, { archivado: true }) : x), 'Capacitador retirado; sus cursos se conservan');
+      }, borrarPregunta: usado ? 'Este capacitador tiene cursos registrados, así que no se borra: se RETIRA. Ya no aparecerá para cursos nuevos y los anteriores se podrán reimprimir igual. ¿Continuar?' : '¿Eliminar este capacitador?' } : {}));
   }
 
   const CAMPOS_PART = [
@@ -1951,13 +2032,15 @@
   async function emitirCurso(cuId) {
     const cu = cursoPorId(cuId); const ins = instructorDe(cu.instructorId);
     if (!ins) { toast('Asigne un capacitador al curso (botón Editar).', true); return; }
+    if (!cu.instructorFijo && faltaRegistroAnio(ins, anioCurso(cu)) && !confirm('El capacitador ' + nombreIns(ins) + ' no tiene capturado su registro ' + anioCurso(cu) + '.\n\nSe imprimirán sus registros generales:\n' + (registrosDe(ins, anioCurso(cu)).filter(Boolean).join('\n') || 'Sin registros') + '\n\n¿Emitir de todos modos?')) return;
+    const cuF = conFoto(cu), nomF = nombreIns(cuF.instructorFijo);
     if (esEmpresa(cu)) {
       if (cu.folioEmpresa) { toast('La constancia de la empresa ya tiene folio: ' + cu.folioEmpresa); return; }
       if (!cu.empresa) { toast('Falta la razón social del curso (botón Editar).', true); return; }
       if (!confirm('Se asignará 1 folio a la constancia para toda la empresa:\n\n«' + textoEmpresa(cu) + '»\n\nRevise que la razón social esté bien escrita: el folio queda ligado a ese texto.\n\n¿Continuar?')) return;
       try {
         sinc('Asignando folio…');
-        const r = await Datos.emitir(cu, ((ins.titulo || '') + ' ' + ins.nombre).trim());
+        const r = await Datos.emitir(cuF, nomF);
         refrescarDB(); sinc(''); toast('Folio asignado: ' + (r.curso.folioEmpresa || ''));
       } catch (e) { sinc(''); toast(e.message, true); }
       return;
@@ -1968,7 +2051,7 @@
     if (!confirm('Se asignarán ' + pend.length + ' folio(s) y quedarán registrados para validación pública.\n\nRevise que los nombres estén bien escritos: el folio queda ligado a ese nombre.\n\n¿Continuar?')) return;
     try {
       sinc('Asignando folios…');
-      const r = await Datos.emitir(cu, ((ins.titulo || '') + ' ' + ins.nombre).trim());
+      const r = await Datos.emitir(cuF, nomF);
       refrescarDB(); sinc(''); toast(r.nuevos.length + ' folio(s) asignados: ' + (r.nuevos[0] || {}).folio + (r.nuevos.length > 1 ? ' a ' + r.nuevos[r.nuevos.length - 1].folio : ''));
     } catch (e) { sinc(''); toast(e.message, true); }
   }
@@ -1986,7 +2069,7 @@
     const todos = cu.participantes || [];
     const ps = todos.filter(p => !p.excluir);
     const faltas = faltaDC3(cu).slice();
-    const ins = instructorDe(cu.instructorId);
+    const ins = instructorCurso(cu);
     if (!ins) faltas.push('asignar un capacitador'); else if (!(ins.firmaData || ins.firmaDriveId)) faltas.push('firma digital del capacitador');
     if (!cu.areaTematica) faltas.push('área temática del curso (Editar)');
     const malos = ps.filter(p => problemas(p, todos, true).length);
@@ -2002,7 +2085,7 @@
   }
   async function armarDC3(cu) {
     const L = listaDC3(cu); if (L.faltas.length) throw new Error('Para las DC-3 falta: ' + L.faltas.join('; ') + '.');
-    const ins = instructorDe(cu.instructorId);
+    const ins = instructorCurso(cu);
     const firma = await bytesFirma(ins);
     const s = cu.servicioId ? servicio(cu.servicioId) : null; const inm = s ? cadena(s).i : null;
     const lg = inm ? logosDe(inm) : { izq: 'gv', der: '' };
@@ -2020,7 +2103,7 @@
       const res = await armarDC3(cu);
       const clave = prefijoFolio(cu).replace(/[^A-Z0-9-]+/g, '');
       ultimoLote = { cuId, res, tipo: 'dc3', nombreLote: 'LOTE_DC3_' + clave + '.pdf', nombreZip: 'DC3_' + clave + '.zip' };
-      await Datos.guardar('cursos', Object.assign({}, cu, { dc3Generadas: new Date().toISOString() })); DB = Datos.vista();
+      await Datos.guardar('cursos', Object.assign({}, conFoto(cu), { dc3Generadas: new Date().toISOString() })); DB = Datos.vista();
       $('#modalCuerpo').innerHTML = '<p>Listas <b>' + n + '</b> DC-3.</p>' +
         '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0"><button class="btn" data-acc="bajarLote">⬇ Lote para imprimir (un PDF)</button><button class="btn sec" data-acc="bajarZip">⬇ ZIP: lote + una por participante</button>' +
         (cu.servicioId ? '<button class="btn sec" data-acc="loteDrive">☁ Guardar lote en Documentos del servicio</button>' : '') + '</div>' +
@@ -2036,7 +2119,7 @@
     });
   }
   async function generarConstancias(cuId) {
-    const cu = cursoPorId(cuId); const ins = instructorDe(cu.instructorId);
+    const cu = cursoPorId(cuId); const ins = instructorCurso(cu);
     if (!ins) { toast('Asigne un capacitador al curso.', true); return; }
     const ps = esEmpresa(cu)
       ? (cu.folioEmpresa && (registroDe(cu.folioEmpresa) || {}).estado !== 'cancelada' ? [{ folio: cu.folioEmpresa, leyenda: cu.leyendaEmpresa || 'El personal brigadista de', empresa: cu.empresa }] : [])
@@ -2048,7 +2131,7 @@
       const res = await Constancias.generar({ curso: Object.assign({}, cu, { fechasTexto: fechasCurso(cu) }), participantes: ps, instructor: Object.assign({}, ins, { firma }), urlVerificacion: CONFIG.VERIFICACION_URL });
       const clave = prefijoFolio(cu).replace(/[^A-Z0-9-]+/g, '');
       ultimoLote = { cuId, res, nombreLote: 'LOTE_PARTICIPACION_' + clave + '.pdf', nombreZip: 'Constancias_' + clave + '.zip' };
-      await Datos.guardar('cursos', Object.assign({}, cu, { generadas: new Date().toISOString() })); DB = Datos.vista();
+      await Datos.guardar('cursos', Object.assign({}, conFoto(cu), { generadas: new Date().toISOString() })); DB = Datos.vista();
       $('#modalCuerpo').innerHTML = '<p>Listas <b>' + ps.length + '</b> constancias (' + esc(ps[0].folio) + (ps.length > 1 ? ' a ' + esc(ps[ps.length - 1].folio) : '') + ').</p>' +
         '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0"><button class="btn" data-acc="bajarLote">⬇ Lote para imprimir (un PDF)</button><button class="btn sec" data-acc="bajarZip">⬇ ZIP: lote + una por participante</button>' +
         (cu.servicioId ? '<button class="btn sec" data-acc="loteDrive">☁ Guardar lote en Documentos del servicio</button>' : '') + '</div>' +
@@ -2067,7 +2150,7 @@
   }
 
   function ordenClaude(cuId) {
-    const cu = cursoPorId(cuId); const ins = instructorDe(cu.instructorId) || {};
+    const cu = cursoPorId(cuId); const ins = instructorCurso(cu) || {};
     const ps = cu.participantes || [];
     const orden = {
       grupo: { curso: cu.curso, clave: claveCurso(cu), cliente: quienCurso(cu), empresa_razon_social: cu.empresa || '', modalidad: (cu.modalidad || '').toLowerCase(),
