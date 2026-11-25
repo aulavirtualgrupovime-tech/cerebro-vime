@@ -133,10 +133,12 @@ table.tabla { width: 100%; border-collapse: collapse; font-size: 13px; }
 
 /* Formularios */
 .form { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; }
+.form > * { min-width: 0; }
 .campo { display: flex; flex-direction: column; gap: 4px; }
 .campo.ancho { grid-column: 1 / -1; }
 .campo label { font-size: 12px; font-weight: 600; color: var(--marino); }
 .campo input, .campo select, .campo textarea { font: inherit; border: 1px solid #CDD5DF; border-radius: 8px; padding: 8px 10px; background: #fff; color: var(--grafito); }
+.campo input, .campo select, .campo textarea { max-width: 100%; }
 .campo input:focus, .campo select:focus, .campo textarea:focus { outline: 2px solid rgba(19, 108, 168, .25); border-color: var(--azul); }
 .campo .ayuda { font-size: 11px; color: var(--gris); }
 .campo.check { flex-direction: row; align-items: center; gap: 8px; }

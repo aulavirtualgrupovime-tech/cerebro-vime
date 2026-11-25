@@ -1336,6 +1336,8 @@
     nuevoCliente: () => formCliente(),
     importarClientes: () => importarClientes(),
     nuevoCurso: () => formCurso(),
+    otroCurso: el => formCurso(null, null, el.dataset.id),
+    reutilizarLista: el => reutilizarLista(el.dataset.id),
     editarCurso: el => formCurso(cursoPorId(el.dataset.id)),
     nuevoInstructor: () => formInstructor(),
     editarInstructor: el => formInstructor(instructorDe(el.dataset.id)),
@@ -1624,7 +1626,7 @@
     const dato = (t, v) => '<div class="dato"><small>' + t + '</small><div>' + v + '</div></div>';
     return '<div class="migas"><a href="#/capacitaciones">Capacitaciones</a> › ' + esc(cu.curso) + '</div>' +
       '<div class="tarjeta"><div class="tarjeta-cab"><div><span class="etiqueta" style="background:var(--azul)">Curso</span><h2 style="margin-top:8px">' + esc(cu.curso) + '</h2><div class="sub">' + esc(quienCurso(cu)) + '</div></div>' +
-      '<button class="btn sec chico" data-acc="editarCurso" data-id="' + cu.id + '">Editar</button></div>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn acento chico" data-acc="otroCurso" data-id="' + cu.id + '" title="Nuevo curso con los datos de esta empresa y sus participantes">♻ Otro curso para esta empresa</button><button class="btn sec chico" data-acc="editarCurso" data-id="' + cu.id + '">Editar</button></div></div>' +
       '<div class="datos">' + dato('Modalidad', esc(cu.modalidad || '—')) + dato('Fechas', esc(fechasCurso(cu) || '—')) + dato('Duración', esc(cu.horas || '—') + ' horas') +
       dato('Sede', esc(cu.sede || '—')) + dato('Capacitador', ins ? esc(((ins.titulo || '') + ' ' + ins.nombre).trim()) + ((ins.firmaData || ins.firmaDriveId) ? '' : ' <span class="etiqueta" style="background:var(--rojo)">sin firma</span>') : '<span style="color:var(--rojo)">Sin asignar</span>') +
       dato('Constancia de participación', emp ? 'Una para toda la empresa: «' + esc(textoEmpresa(cu)) + '»' : 'Una por participante') +
@@ -1634,7 +1636,7 @@
       dato('Folios', esc(prefijoFolio(cu)) + (emp ? '-NNN (uno para la empresa)' : '-001, -002…')) + '</div>' +
       (faltaDC3(cu).length ? '<div class="aviso-it rojo" style="margin-top:12px;cursor:default"><div><b>Faltan datos para emitir las DC-3</b><span>Complete en «Editar»: ' + esc(faltaDC3(cu).join(', ')) + '.</span></div></div>' : '') + '</div>' +
       '<div class="tarjeta"><div class="tarjeta-cab"><h3>Participantes (' + ps.length + ')</h3><div style="display:flex;gap:8px;flex-wrap:wrap">' +
-      '<button class="btn sec" data-acc="plantillaParticipantes" title="Plantilla para que el cliente llene los datos de sus trabajadores">⬇ Plantilla de Excel</button><button class="btn sec" data-acc="importarLista" data-id="' + cu.id + '">📥 Importar lista (Excel, Word o foto)</button><button class="btn acento" data-acc="nuevoParticipante" data-id="' + cu.id + '">+ Agregar</button></div></div>' +
+      '<button class="btn sec" data-acc="plantillaParticipantes" title="Plantilla para que el cliente llene los datos de sus trabajadores">⬇ Plantilla de Excel</button><button class="btn sec" data-acc="importarLista" data-id="' + cu.id + '">📥 Importar lista (Excel, Word o foto)</button><button class="btn sec" data-acc="reutilizarLista" data-id="' + cu.id + '" title="Copiar los participantes de otro curso ya registrado">♻ Reutilizar lista</button><button class="btn acento" data-acc="nuevoParticipante" data-id="' + cu.id + '">+ Agregar</button></div></div>' +
       (emp ? '<p class="sub">Con constancia para toda la empresa la lista es opcional' + (dc3 ? ', pero se necesita para las DC-3.' : '; sirve como registro de asistencia.') + '</p>' : '') +
       (conErr.length ? '<div class="aviso-it ambar"><div><b>' + conErr.length + ' participante' + (conErr.length === 1 ? '' : 's') + ' con datos por revisar</b><span>' + (dc3 ? 'La CURP correcta es obligatoria para la DC-3.' : 'Revise nombres y apellidos.') + '</span></div></div>' : '') +
       (ps.length ? '<div style="overflow-x:auto"><table class="tabla"><thead><tr><th>#</th><th>Nombre</th><th>CURP</th><th>Puesto</th><th>Folio</th><th></th></tr></thead><tbody>' +
@@ -1665,7 +1667,53 @@
       '<p class="sub">El material didáctico (Manual del Participante, Guía Visual y póster) lo genera la skill «Aula Virtual Grupo VIME» en Claude. Este botón arma la orden con los datos del curso, el capacitador, la lista y los folios para que solo la pegue en el chat junto con el contenido del curso. Las DC-3 ya se emiten aquí, en «Constancias de participación».</p></div>';
   }
 
-  function formCurso(cu, pre) {
+  /* ---------- Reutilizar empresa y participantes de un curso anterior ---------- */
+  const CAMPOS_EMPRESA_CURSO = ['empresa', 'rfcEmpresa', 'aplicaDC3', 'repLegalEstado', 'repLegal', 'repTrabEstado', 'repTrab', 'ocupacionDefault', 'tipoConstancia', 'leyendaEmpresa', 'sede'];
+  const nombreLlano = p => norm([p.nombres, p.apellidoPaterno, p.apellidoMaterno].join(' ')).replace(/[^a-z0-9]+/g, ' ').trim();
+  /** Participante para otro curso: sin folio ni marcas del curso anterior. */
+  function copiaParticipante(p) { const o = {}; ['nombres', 'apellidoPaterno', 'apellidoMaterno', 'curp', 'puesto', 'ocupacion', 'empresa'].forEach(k => { o[k] = p[k] || ''; }); return o; }
+  /** Ya está en la lista: misma CURP o, si a alguno le falta, mismo nombre completo. */
+  function yaEnLista(p, lista) { return lista.some(x => p.curp && x.curp ? p.curp === x.curp : nombreLlano(p) === nombreLlano(x)); }
+  /** Opciones de cursos agrupadas por empresa; primero la del curso de referencia. */
+  function opcionesReutilizar(salvo, soloConLista, ref, elegido) {
+    const g = {};
+    (DB.cursos || []).filter(c => c.id !== salvo && (!soloConLista || (c.participantes || []).length)).forEach(c => { const n = c.empresa || quienCurso(c) || 'Sin empresa'; const k = claveRazon(n) || 'sin'; (g[k] = g[k] || { n, l: [] }).l.push(c); });
+    const kr = ref ? claveRazon(ref) : '';
+    return Object.keys(g).sort((a, b) => (b === kr) - (a === kr) || g[a].n.localeCompare(g[b].n)).map(k => '<optgroup label="' + esc(g[k].n) + '">' + g[k].l.sort((a, b) => String(b.fechaInicio || '').localeCompare(String(a.fechaInicio || ''))).map(c => { const n = (c.participantes || []).length; return '<option value="' + esc(c.id) + '"' + (c.id === elegido ? ' selected' : '') + '>' + esc(c.curso + ' · ' + fechaCorta(c.fechaInicio) + ' · ' + (n ? n + ' participante' + (n === 1 ? '' : 's') : 'sin lista')) + '</option>'; }).join('') + '</optgroup>').join('');
+  }
+  /** Lista con casillas para elegir participantes. «existentes»: los que ya están en el curso (no se repiten). */
+  function pintarElegir(caja, ps, existentes, alCambiar) {
+    const datos = ps.map(p => ({ p, ya: yaEnLista(p, existentes) }));
+    caja.innerHTML = !ps.length ? '<p class="sub">Ese curso no tiene lista de participantes.</p>' : '<div class="campo check"><input type="checkbox" id="reuTodos" checked><label for="reuTodos">Seleccionar todos</label></div><div style="max-height:220px;overflow:auto;border:1px solid var(--gris-claro);border-radius:8px;padding:2px 10px;background:#fff">' +
+      datos.map((d, k) => '<label style="display:flex;gap:8px;align-items:center;padding:5px 0;border-top:' + (k ? '1px solid #EEF1F5' : '0') + ';font-weight:400"><input type="checkbox" data-reu="' + k + '"' + (d.ya ? ' disabled' : ' checked') + '><span style="flex:1">' + esc(nombreParticipante(d.p)) + (d.p.puesto ? ' <span class="sub">· ' + esc(d.p.puesto) + '</span>' : '') + '</span><span class="sub">' + (d.ya ? 'Ya está en la lista' : esc(d.p.curp || 'Sin CURP')) + '</span></label>').join('') + '</div>';
+    const cs = () => Array.from(caja.querySelectorAll('[data-reu]:not([disabled])'));
+    const avisar = () => { const t = caja.querySelector('#reuTodos'); if (t) { t.checked = cs().length > 0 && cs().every(x => x.checked); t.disabled = !cs().length; } if (alCambiar) alCambiar(cs().filter(x => x.checked).length); };
+    cs().forEach(x => x.addEventListener('change', avisar));
+    const t = caja.querySelector('#reuTodos'); if (t) t.addEventListener('change', () => { cs().forEach(x => { x.checked = t.checked; }); avisar(); });
+    avisar();
+    return () => cs().filter(x => x.checked).map(x => copiaParticipante(datos[+x.dataset.reu].p));
+  }
+  function reutilizarLista(cuId) {
+    const cu = cursoPorId(cuId), ops = opcionesReutilizar(cuId, true, cu.empresa || quienCurso(cu));
+    if (!ops) { toast('Aún no hay otro curso con lista de participantes.', true); return; }
+    let elegir = null;
+    abrirModal('Reutilizar lista de participantes · ' + cu.curso, '<form class="form" id="formReu"><div class="campo ancho"><label for="reuCurso">Tomar la lista de este curso</label><select id="reuCurso"><option value="">Elija un curso…</option>' + ops + '</select><span class="ayuda">Se copian nombre, CURP, puesto y ocupación. Los folios y las constancias del otro curso no se tocan.</span></div><div class="campo ancho" id="reuLista"></div><div class="error-form" id="errReu" hidden></div><div class="form-pie"><button type="button" class="btn sec" data-acc="cerrarModal">Cancelar</button><button class="btn" type="submit" id="reuOk" disabled>Agregar</button></div></form>');
+    $('#reuCurso').addEventListener('change', e => {
+      const o = cursoPorId(e.target.value); elegir = null; $('#reuLista').innerHTML = ''; $('#reuOk').disabled = true; $('#reuOk').textContent = 'Agregar';
+      if (o) elegir = pintarElegir($('#reuLista'), o.participantes || [], cu.participantes || [], n => { $('#reuOk').disabled = !n; $('#reuOk').textContent = 'Agregar ' + n + ' participante' + (n === 1 ? '' : 's'); });
+    });
+    let ocupado = false;
+    $('#formReu').addEventListener('submit', async e => {
+      e.preventDefault(); if (ocupado || !elegir) return; const nuevos = elegir(); if (!nuevos.length) return;
+      ocupado = true; $('#reuOk').disabled = true;
+      try { const act = cursoPorId(cuId); await guardar('cursos', Object.assign({}, act, { participantes: (act.participantes || []).concat(nuevos) })); cerrarModal(); toast(nuevos.length + ' participante' + (nuevos.length === 1 ? ' agregado' : 's agregados')); }
+      catch (ex) { ocupado = false; $('#reuOk').disabled = false; $('#errReu').textContent = ex.message; $('#errReu').hidden = false; }
+    });
+  }
+
+  function formCurso(cu, pre, fuenteId) {
+    let elegirPart = null;
+    const opsReu = cu && tieneFolios(cu) ? '' : opcionesReutilizar(cu && cu.id, false, (cu || pre || {}).empresa, fuenteId);
     const servs = DB.servicios.filter(s => s.tipo === 'CAPACITACIONES' && !s.archivado);
     const val = Object.assign({ modalidad: 'Presencial', instructorId: (instructores()[0] || {}).id || '', tipoConstancia: 'individual', aplicaDC3: 'si', leyendaEmpresa: 'El personal brigadista de', repLegalEstado: 'aplica', repTrabEstado: 'aplica', areaTematica: '6000' }, pre || {}, cu || {});
     if (!val.rfcEmpresa && val.servicioId) val.rfcEmpresa = empresaDe(servicio(val.servicioId)).rfc;
@@ -1728,11 +1776,31 @@
         refrescarDB(); toast(viejos.length + ' folio(s) cancelado(s) y ' + r.nuevos.length + ' nuevo(s): ' + ((r.nuevos[0] || {}).folio || ''));
         return;
       }
-      const g = await guardar('cursos', Object.assign({ participantes: [] }, pre || {}, cu || {}, v), cu ? 'Curso actualizado' : 'Curso creado');
+      const g = await guardar('cursos', Object.assign({ participantes: !cu && elegirPart ? elegirPart() : [] }, pre || {}, cu || {}, v), cu ? 'Curso actualizado' : 'Curso creado');
       if (!cu) location.hash = '#/curso/' + g.id;
     }, Object.assign({
+      extraHtml: opsReu ? '<div class="campo ancho" id="cajaReu" style="border:1px solid var(--dorado);border-radius:10px;padding:10px 12px;background:#FFFBF2"><label for="reuFuente">♻ Reutilizar datos de un curso registrado (opcional)</label><select id="reuFuente"><option value="">No reutilizar: capturar todo</option>' + opsReu + '</select><span class="ayuda">' + (cu ? 'Llena los datos de la empresa con los de otro curso; revíselos antes de guardar.' : 'Llena los datos de la empresa y copia la lista de participantes. Solo capture el nombre del curso, las fechas y las horas.') + '</span><div id="reuPart"></div></div>' : '',
       alAbrir: () => {
         const ver = (k, si) => { const el = $('#f_' + k); if (el) el.closest('.campo').hidden = !si; };
+        if (opsReu) {
+          $('#formModal').prepend($('#cajaReu'));
+          const usar = () => {
+            const o = cursoPorId($('#reuFuente').value); elegirPart = null; $('#reuPart').innerHTML = '';
+            if (!o) return;
+            const D = { aplicaDC3: 'si', repLegalEstado: 'aplica', repTrabEstado: 'aplica', tipoConstancia: 'individual', leyendaEmpresa: 'El personal brigadista de' };
+            CAMPOS_EMPRESA_CURSO.forEach(k => { const el = $('#f_' + k); if (el) el.value = o[k] || D[k] || ''; });
+            const sv = $('#f_servicioId'); if (!(pre && pre.eventoId) && !(cu && cu.eventoId)) sv.value = Array.from(sv.options).some(x => x.value === o.servicioId) ? o.servicioId : '';
+            if (!$('#f_rfcEmpresa').value && o.servicioId) $('#f_rfcEmpresa').value = empresaDe(servicio(o.servicioId)).rfc;
+            ajustar();
+            if (!cu && (o.participantes || []).length) {
+              $('#reuPart').innerHTML = '<div class="campo check" style="margin-top:8px"><input type="checkbox" id="reuSi" checked><label for="reuSi">Copiar también su lista de participantes</label></div><div id="reuLista"></div>';
+              const pintarL = () => { if ($('#reuSi').checked) elegirPart = pintarElegir($('#reuLista'), o.participantes, []); else { elegirPart = null; $('#reuLista').innerHTML = ''; } };
+              $('#reuSi').addEventListener('change', pintarL); pintarL();
+            }
+          };
+          $('#reuFuente').addEventListener('change', usar);
+          setTimeout(() => { if (fuenteId && $('#reuFuente')) usar(); }, 0);
+        }
         const ajustar = () => {
           const dc3 = $('#f_aplicaDC3').value !== 'no';
           ['areaTematica', 'ocupacionDefault', 'rfcEmpresa', 'repLegalEstado', 'repTrabEstado'].forEach(k => ver(k, dc3));
